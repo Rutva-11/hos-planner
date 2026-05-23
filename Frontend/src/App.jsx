@@ -4,6 +4,7 @@ import { ThemeProvider } from './context/ThemeContext';
 import Navbar from './components/Navbar';
 import LandingPage from './pages/LandingPage';
 import PlannerPage from './pages/PlannerPage';
+import DailyLogVisualizer from './pages/DailyLogVisualizer';
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
             <Routes>
               <Route path="/" element={<LandingPage />} />
               <Route path="/planner" element={<PlannerPage />} />
+              <Route path="/logs" element={<DailyLogVisualizer />} />
             </Routes>
           </main>
         </div>

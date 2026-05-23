@@ -73,32 +73,24 @@ export async function fetchAutocompleteSuggestions(query) {
 }
 
 /**
- * Sends a POST request to the Django backend HOS Compliance Copilot endpoint.
+ * Sends a single compliance query to the backend Compliance Assistant endpoint.
+ * Simple request → response flow. No conversational state or history.
+ * @param {string} prompt - The compliance question or preset action text
+ * @returns {Promise<string>} The AI response string
  */
-export async function sendCopilotChatMessage(message, history = [], context = {}) {
-  const payload = {
-    message,
-    route_context: context
-  };
-
+export async function sendComplianceQuery(prompt) {
   try {
-    const response = await API.post('/copilot/', payload);
-    return {
-      reply: response.data.response
-    };
+    const response = await API.post('/copilot/', { prompt }, { timeout: 12000 });
+    return response.data.response;
   } catch (error) {
+    if (error.code === 'ECONNABORTED') {
+      throw new Error('The compliance request timed out. Please try again.');
+    }
     if (error.response && error.response.data) {
       const data = error.response.data;
-      const parsedError = new Error(data.error || 'Failed to send message to Copilot.');
-      parsedError.code = data.code || 'api_error';
-      parsedError.details = data.details || null;
-      parsedError.status = error.response.status;
-      throw parsedError;
+      throw new Error(data.error || 'Compliance Assistant is temporarily unavailable.');
     }
-    
-    const parsedError = new Error(error.message || 'A network error occurred. Please verify backend connectivity.');
-    parsedError.code = 'network_error';
-    throw parsedError;
+    throw new Error('Unable to reach the Compliance Assistant. Please check your connection.');
   }
 }
 
@@ -241,3 +233,17 @@ function mapBackendResponseToFrontend(data) {
     polyline: data.polyline || [],
   };
 }
+
+/**
+ * Fetches the mock daily log segments for the visualizer dashboard.
+ */
+export async function fetchDailyLogs() {
+  try {
+    const response = await API.get('/logs/');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching daily logs:', error);
+    throw error;
+  }
+}
+

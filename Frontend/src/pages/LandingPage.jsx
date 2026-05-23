@@ -1,22 +1,50 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence, useMotionValue, useSpring, useMotionTemplate, animate } from 'framer-motion';
-import { ArrowRight, ShieldCheck, Compass, Clock, MapPin, Sparkles, X, Info, Send, Trash2, Copy, Check, RotateCcw, AlertTriangle } from 'lucide-react';
-import { sendCopilotChatMessage } from '../services/api';
+import { ArrowRight, ShieldCheck, Compass, Clock, MapPin, Sparkles, X, Info, AlertTriangle, RotateCcw, ChevronRight } from 'lucide-react';
+import { sendComplianceQuery } from '../services/api';
 
-// Quick action suggestions for the copilot
-const COPILOT_SUGGESTIONS = [
-  "Explain 11-hour rule",
-  "Why is my route violating HOS?",
-  "Optimize this trip",
-  "Explain sleeper berth rules",
-  "How can I reduce drive time?",
-  "What is the 70-hour cycle rule?",
-  "Suggest fuel stops",
-  "Explain mandatory break rules"
+
+
+// Preset compliance actions for the Compliance Assistant panel
+const PRESET_ACTIONS = [
+  {
+    id: 'eleven_hour',
+    label: 'Explain 11-Hour Rule',
+    desc: 'FMCSA § 395.3(a)(3)',
+    prompt: 'Explain the FMCSA 11-hour driving rule clearly and concisely, including when it applies and how drivers should track it.',
+    icon: Clock,
+  },
+  {
+    id: 'sleeper_berth',
+    label: 'Sleeper Berth Split',
+    desc: 'FMCSA § 395.1(g)',
+    prompt: 'Explain sleeper berth split rest options under FMCSA rules, including the 8/2 and 7/3 configurations and how they affect the 14-hour window.',
+    icon: ShieldCheck,
+  },
+  {
+    id: 'non_compliant',
+    label: 'Route Non-Compliant?',
+    desc: 'Common violation causes',
+    prompt: 'What are the most common reasons a trucking route becomes non-compliant with FMCSA HOS regulations, and how can a driver address them?',
+    icon: AlertTriangle,
+  },
+  {
+    id: 'optimize',
+    label: 'Optimize This Trip',
+    desc: 'Maximize drive time',
+    prompt: 'What are the best strategies for optimizing a long-haul trucking trip to maximize legal driving time while maintaining full FMCSA HOS compliance?',
+    icon: Compass,
+  },
+  {
+    id: 'fmcsa_risk',
+    label: 'FMCSA Risk Review',
+    desc: 'Safety scoring factors',
+    prompt: 'What factors contribute to a high FMCSA safety risk score, and what operational changes can a carrier make to reduce their CSA score and audit exposure?',
+    icon: Sparkles,
+  },
 ];
 
-// CountUp component using framer-motion animate for spring-like counts without triggering component re-renders
 function CountUp({ value, decimals = 0, suffix = '', duration = 1.5, prefix = '' }) {
   const nodeRef = useRef(null);
   const prevValueRef = useRef(0);
@@ -151,80 +179,6 @@ const itemVariants = {
   },
 };
 
-// Simple helper to parse basic markdown elements inside chatbot message bubbles
-function formatMessageText(text) {
-  if (!text) return '';
-
-  let html = text;
-
-  // Replace GitHub-style alerts: > [!NOTE]\n> *Note: ...*
-  html = html.replace(/> \[\!(NOTE|WARNING|IMPORTANT)\]\n>\s*(.*)/g, (match, type, content) => {
-    const colors = {
-      NOTE: 'border-l-2 border-luxury-gold-500 bg-luxury-gold-500/5 text-luxury-gold-400',
-      WARNING: 'border-l-2 border-red-500 bg-red-500/5 text-red-400',
-      IMPORTANT: 'border-l-2 border-blue-500 bg-blue-500/5 text-blue-400'
-    };
-    return `<div class="p-2 rounded-r-lg my-2 text-[10px] ${colors[type] || colors.NOTE}">${content}</div>`;
-  });
-
-  // Headers: ### text
-  html = html.replace(/^### (.*$)/gim, '<h4 class="text-xs font-bold text-luxury-gold-400 mt-2 mb-1">$1</h4>');
-
-  // Bold: **text**
-  html = html.replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-white">$1</strong>');
-
-  // Bullet lists: - item
-  html = html.replace(/^\s*-\s*(.*$)/gim, '<li class="list-disc ml-4 my-0.5">$1</li>');
-
-  // Linebreaks: \n
-  html = html.replace(/\n/g, '<br />');
-
-  // Parse tables if any are present in the response
-  if (html.includes('|')) {
-    const lines = html.split('<br />');
-    let inTable = false;
-    let tableHtml = '<div class="overflow-x-auto my-3"><table class="min-w-full text-[10px] border-collapse border border-luxury-charcoal-700/60">';
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (line.startsWith('|') && line.endsWith('|')) {
-        if (line.includes('---') || line.includes(':---')) {
-          continue;
-        }
-
-        if (!inTable) {
-          inTable = true;
-        }
-
-        const cells = line.split('|').slice(1, -1);
-        tableHtml += '<tr class="border-b border-luxury-charcoal-800/80">';
-        cells.forEach(cell => {
-          const isHeader = !lines[i - 1] || !lines[i - 1].trim().startsWith('|') || lines[i + 1]?.includes('---');
-          const cellTag = isHeader ? 'th' : 'td';
-          const cellClass = isHeader
-            ? 'p-1.5 font-semibold text-luxury-gold-400 bg-luxury-charcoal-900 text-left'
-            : 'p-1.5 text-luxury-charcoal-200 text-left';
-          tableHtml += `<${cellTag} class="${cellClass}">${cell.trim()}</${cellTag}>`;
-        });
-        tableHtml += '</tr>';
-      } else {
-        if (inTable) {
-          inTable = false;
-          tableHtml += '</table></div>';
-          lines[i] = tableHtml + lines[i];
-        }
-      }
-    }
-    if (inTable) {
-      tableHtml += '</table></div>';
-      html = lines.join('<br />') + tableHtml;
-    } else {
-      html = lines.join('<br />');
-    }
-  }
-
-  return <span dangerouslySetInnerHTML={{ __html: html }} />;
-}
 
 export default function LandingPage() {
   const navigate = useNavigate();
@@ -234,140 +188,33 @@ export default function LandingPage() {
 
   const activeRoute = SIMULATED_ROUTES[activeRouteIndex];
 
-  // Copilot Chat States
-  const [messages, setMessages] = useState([
-    {
-      id: 'welcome',
-      sender: 'bot',
-      text: "AURA Compliance Copilot ready.",
-      timestamp: new Date()
-    }
-  ]);
-  const [inputValue, setInputValue] = useState('');
+  // Compliance Assistant States — simple request/response, no history
   const [isLoading, setIsLoading] = useState(false);
-  const [chatError, setChatError] = useState(null);
-  const [copiedId, setCopiedId] = useState(null);
+  const [assistantResponse, setAssistantResponse] = useState(null);
+  const [assistantError, setAssistantError] = useState(null);
+  const [activeAction, setActiveAction] = useState(null);
 
-  const chatEndRef = useRef(null);
-  const textareaRef = useRef(null);
-
-  const scrollToBottom = () => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages, isLoading]);
-
-  const handleSendMessage = async (textToSend) => {
-    const text = (textToSend || inputValue).trim();
-    if (!text || isLoading) return;
-
-    setInputValue('');
-    setChatError(null);
+  const handlePresetAction = async (action) => {
+    if (isLoading) return;
+    setActiveAction(action);
+    setAssistantResponse(null);
+    setAssistantError(null);
     setIsLoading(true);
-
-    const userMessageId = `user-${Date.now()}`;
-    const userMessage = {
-      id: userMessageId,
-      sender: 'user',
-      text: text,
-      timestamp: new Date()
-    };
-
-    setMessages(prev => [...prev, userMessage]);
-
-    // Send dialogue history up to last 6 messages
-    const formattedHistory = messages
-      .filter(m => m.id !== 'welcome')
-      .map(m => ({
-        sender: m.sender,
-        text: m.text
-      }));
-
-    const contextData = {
-      name: activeRoute.name,
-      distance: activeRoute.distance,
-      cycleRemaining: activeRoute.cycleRemaining,
-      drivingLimit: activeRoute.drivingLimit,
-      stops: activeRoute.stops
-    };
-
     try {
-      const response = await sendCopilotChatMessage(text, formattedHistory, contextData);
-      const botMessageId = `bot-${Date.now()}`;
-
-      const placeholderBotMessage = {
-        id: botMessageId,
-        sender: 'bot',
-        text: '',
-        timestamp: new Date()
-      };
-
-      setMessages(prev => [...prev, placeholderBotMessage]);
-      setIsLoading(false);
-
-      // Stream the response text word-by-word
-      let currentWordIndex = 0;
-      const words = response.reply.split(' ');
-      const typingTimer = setInterval(() => {
-        if (currentWordIndex < words.length) {
-          const chunk = words.slice(0, currentWordIndex + 1).join(' ');
-          setMessages(prev =>
-            prev.map(msg => msg.id === botMessageId ? { ...msg, text: chunk } : msg)
-          );
-          currentWordIndex++;
-        } else {
-          clearInterval(typingTimer);
-        }
-      }, 35);
-
+      const response = await sendComplianceQuery(action.prompt);
+      setAssistantResponse(response);
     } catch (error) {
-      console.error("Copilot error:", error);
+      console.error('Compliance Assistant error:', error);
+      setAssistantError(error.message || 'Unable to reach the Compliance Assistant.');
+    } finally {
       setIsLoading(false);
-      setChatError({
-        message: error.message || 'Failed to reach AURA Copilot service.',
-        retryText: text
-      });
     }
   };
 
-  const handleRetry = () => {
-    if (chatError && chatError.retryText) {
-      const textToRetry = chatError.retryText;
-      setChatError(null);
-      handleSendMessage(textToRetry);
-    }
-  };
-
-  const handleClearChat = () => {
-    setMessages([
-      {
-        id: 'welcome',
-        sender: 'bot',
-        text: "AURA Compliance Copilot ready.",
-        timestamp: new Date()
-      }
-    ]);
-    setChatError(null);
-  };
-
-  const handleCopyMessage = (id, text) => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 2000);
-    });
-  };
-
-  const handlePillClick = (promptText) => {
-    handleSendMessage(promptText);
-  };
-
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage();
-    }
+  const handleResetAssistant = () => {
+    setAssistantResponse(null);
+    setAssistantError(null);
+    setActiveAction(null);
   };
 
   const mouseX = useMotionValue(0);
@@ -592,232 +439,204 @@ export default function LandingPage() {
         >
           {/* Outer glow halo behind card */}
           <div className="absolute inset-x-8 inset-y-4 rounded-3xl bg-luxury-gold-500/5 blur-2xl pointer-events-none" />
-          {/* Main Card Container */}
-          <div className="relative w-full max-w-[500px] h-[490px] rounded-3xl border border-luxury-charcoal-700/60 bg-luxury-charcoal-900/90 dark:bg-luxury-charcoal-950/85 backdrop-blur-xl shadow-glow flex flex-col overflow-hidden group text-left">
+
+          {/* Main Compliance Assistant Card */}
+          <div className="relative w-full max-w-[480px] rounded-3xl border border-luxury-charcoal-700/60 bg-luxury-charcoal-900/90 dark:bg-luxury-charcoal-950/85 backdrop-blur-xl shadow-glow flex flex-col overflow-hidden group text-left">
 
             {/* Glossy Overlay Reflection */}
             <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 ease-out pointer-events-none" />
 
-            {/* Header: Title and controls */}
-            <div className="flex items-center justify-between border-b border-luxury-charcoal-800/70 px-6 py-3 relative z-10">
+            {/* Telemetry Background Decoration */}
+            <div className="absolute inset-0 pointer-events-none select-none overflow-hidden opacity-20 dark:opacity-30 z-0">
+              <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(171,137,77,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(171,137,77,0.04)_1px,transparent_1px)] bg-[size:20px_20px]" />
+              <svg className="absolute inset-0 w-full h-full text-luxury-gold-500/10" xmlns="http://www.w3.org/2000/svg">
+                <line x1="5%" y1="30%" x2="95%" y2="30%" stroke="currentColor" strokeWidth="0.5" strokeDasharray="3 6" />
+                <line x1="5%" y1="70%" x2="95%" y2="70%" stroke="currentColor" strokeWidth="0.5" strokeDasharray="3 6" />
+                <circle cx="50%" cy="50%" r="70" stroke="currentColor" strokeWidth="0.5" strokeDasharray="2 5" fill="none" className="animate-spin" style={{ animationDuration: '40s', transformOrigin: 'center' }} />
+                <circle cx="50%" cy="50%" r="120" stroke="currentColor" strokeWidth="0.5" strokeDasharray="1 8" fill="none" className="animate-spin" style={{ animationDuration: '60s', transformOrigin: 'center', animationDirection: 'reverse' }} />
+                <path d="M 14,28 L 14,14 L 28,14" fill="none" stroke="currentColor" strokeWidth="0.75" />
+                <path d="M calc(100% - 14),28 L calc(100% - 14),14 L calc(100% - 28),14" fill="none" stroke="currentColor" strokeWidth="0.75" />
+              </svg>
+              <div className="absolute bottom-3 right-5 font-mono text-[7px] text-luxury-gold-500/30 tracking-widest uppercase">AURA_HOS_V2.1 • ACTIVE</div>
+            </div>
+
+            {/* Card Header */}
+            <div className="flex items-center justify-between border-b border-luxury-charcoal-800/70 px-5 py-3.5 relative z-10">
               <div className="flex items-center gap-2.5">
-                <div className="relative">
+                <div className="relative flex-shrink-0">
                   <div className="w-2 h-2 rounded-full bg-emerald-500" />
                   <div className="absolute inset-0 w-2 h-2 rounded-full bg-emerald-500 animate-ping opacity-60" />
                 </div>
-                <span className="text-[10px] uppercase tracking-widest text-luxury-gold-500 font-bold">AURA Compliance Copilot</span>
+                <div>
+                  <span className="text-[10px] uppercase tracking-widest text-luxury-gold-500 font-bold block leading-none">Compliance Assistant</span>
+                  <span className="text-[8px] text-luxury-charcoal-500 uppercase tracking-wider font-mono">FMCSA Intelligence · HOS Auditor</span>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[9px] px-2.5 py-1 rounded-lg bg-luxury-charcoal-800/80 text-luxury-charcoal-400 border border-luxury-charcoal-700/30 font-mono truncate max-w-[130px]">
-                  {activeRoute.name}
-                </span>
+              {(assistantResponse || assistantError) && (
                 <button
-                  onClick={handleClearChat}
-                  title="Clear Conversation"
-                  className="p-1.5 rounded-lg border border-luxury-charcoal-700/50 hover:border-luxury-charcoal-600 text-luxury-charcoal-500 hover:text-luxury-gold-400 transition-all duration-200"
+                  onClick={handleResetAssistant}
+                  title="Back to Actions"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-luxury-charcoal-700/50 hover:border-luxury-gold-500/30 text-luxury-charcoal-500 hover:text-luxury-gold-400 transition-all duration-200 text-[9px] uppercase tracking-wider font-semibold"
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <RotateCcw className="h-3 w-3" />
+                  <span>Reset</span>
                 </button>
-              </div>
+              )}
             </div>
 
-            {/* Message Feed Area */}
-            <div className="flex-1 overflow-y-auto px-6 py-3.5 space-y-3.5 scrollbar-thin scrollbar-thumb-luxury-gold-500/10 hover:scrollbar-thumb-luxury-gold-500/20 overscroll-contain relative">
+            {/* Content Area */}
+            <div className="relative z-10 flex-1 flex flex-col">
 
-              {/* Subtle Operational UI Visuals */}
-              <div className="absolute inset-0 pointer-events-none select-none overflow-hidden opacity-30 dark:opacity-40 z-0">
-                {/* Faint Grid Texture */}
-                <div
-                  className="absolute inset-0 bg-[linear-gradient(to_right,rgba(171,137,77,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(171,137,77,0.04)_1px,transparent_1px)] bg-[size:16px_16px]"
-                />
+              <AnimatePresence mode="wait">
 
-                {/* Soft glow gradient overlay */}
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-56 h-56 rounded-full bg-luxury-gold-500/5 blur-3xl animate-pulse" style={{ animationDuration: '8s' }} />
-
-                {/* Telemetry Visuals */}
-                <svg className="absolute inset-0 w-full h-full text-luxury-gold-500/10" xmlns="http://www.w3.org/2000/svg">
-                  {/* Faint Horizontal/Vertical Telemetry lines */}
-                  <line x1="5%" y1="25%" x2="95%" y2="25%" stroke="currentColor" strokeWidth="0.5" strokeDasharray="3 6" />
-                  <line x1="5%" y1="75%" x2="95%" y2="75%" stroke="currentColor" strokeWidth="0.5" strokeDasharray="3 6" />
-                  <line x1="25%" y1="5%" x2="25%" y2="95%" stroke="currentColor" strokeWidth="0.5" strokeDasharray="1 10" />
-                  <line x1="75%" y1="5%" x2="75%" y2="95%" stroke="currentColor" strokeWidth="0.5" strokeDasharray="1 10" />
-
-                  {/* Concentric rotating radar lines */}
-                  <circle cx="50%" cy="50%" r="50" stroke="currentColor" strokeWidth="0.5" strokeDasharray="2 4" fill="none" className="animate-spin" style={{ animationDuration: '30s', transformOrigin: 'center' }} />
-                  <circle cx="50%" cy="50%" r="90" stroke="currentColor" strokeWidth="0.5" strokeDasharray="1 8" fill="none" className="animate-spin" style={{ animationDuration: '50s', transformOrigin: 'center', animationDirection: 'reverse' }} />
-
-                  {/* Target Crosshairs in the corners */}
-                  <path d="M 16,32 L 16,16 L 32,16" fill="none" stroke="currentColor" strokeWidth="0.75" />
-                  <path d="M 16,calc(100% - 32) L 16,calc(100% - 16) L 32,calc(100% - 16)" fill="none" stroke="currentColor" strokeWidth="0.75" />
-                  <path d="M calc(100% - 16),32 L calc(100% - 16),16 L calc(100% - 32),16" fill="none" stroke="currentColor" strokeWidth="0.75" />
-                  <path d="M calc(100% - 16),calc(100% - 32) L calc(100% - 16),calc(100% - 16) L calc(100% - 32),calc(100% - 16)" fill="none" stroke="currentColor" strokeWidth="0.75" />
-                </svg>
-
-                {/* Pulse Compliance Indicator */}
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center justify-center space-y-1.5 opacity-60">
-                  <div className="relative">
-                    <div className="w-1.5 h-1.5 rounded-full bg-luxury-gold-500/40" />
-                    <div className="absolute inset-0 w-1.5 h-1.5 rounded-full bg-luxury-gold-500/30 animate-ping" />
-                  </div>
-                  <span className="text-[7px] font-mono tracking-widest text-luxury-gold-500/30 uppercase">SYSTEM ACTIVE</span>
-                </div>
-
-                {/* Faint Telemetry text in corners */}
-                <div className="absolute top-4 left-6 font-mono text-[7px] text-luxury-gold-500/20 tracking-widest uppercase">
-                  LAT: 47.6062° N | LON: 122.3321° W
-                </div>
-                <div className="absolute bottom-4 right-6 font-mono text-[7px] text-luxury-gold-500/20 tracking-widest uppercase">
-                  AURA_HOS_V2.1.0 • COMPLIANT
-                </div>
-              </div>
-
-              <AnimatePresence initial={false}>
-                {messages.map((msg) => (
+                {/* Default View: Preset Action Grid */}
+                {!isLoading && !assistantResponse && !assistantError && (
                   <motion.div
-                    key={msg.id}
-                    initial={{ opacity: 0, y: 10, scale: 0.98 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    transition={{ duration: 0.3 }}
-                    className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'} relative z-10`}
+                    key="presets"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.25 }}
+                    className="flex flex-col p-5 gap-4"
                   >
-                    <div
-                      className={`relative group/msg max-w-[88%] rounded-2xl px-4 py-3 text-[11px] shadow-sm border ${msg.sender === 'user'
-                          ? 'bg-luxury-gold-500/10 text-luxury-gold-100 border-luxury-gold-500/20 rounded-tr-sm'
-                          : 'bg-luxury-charcoal-805/85 text-luxury-charcoal-200 border-luxury-charcoal-700/40 rounded-tl-sm'
-                        }`}
-                    >
-                      {/* Message Content */}
-                      <div className="prose prose-invert prose-xs max-w-none leading-relaxed tracking-[0.01em]">
-                        {formatMessageText(msg.text)}
-                      </div>
-
-                      {/* Floating Timestamp & Actions (only show for bot/AI answers) */}
-                      <div className="mt-1 flex items-center justify-between gap-2 text-[9px] text-luxury-charcoal-550">
-                        <span>
-                          {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                        {msg.sender === 'bot' && msg.text && (
+                    <p className="text-[10px] text-luxury-charcoal-500 uppercase tracking-widest font-semibold">
+                      Select a compliance query
+                    </p>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      {PRESET_ACTIONS.map((action) => {
+                        const Icon = action.icon;
+                        return (
                           <button
-                            onClick={() => handleCopyMessage(msg.id, msg.text)}
-                            className="opacity-0 group-hover/msg:opacity-100 p-1 hover:text-luxury-gold-400 transition-all rounded"
-                            title="Copy Response"
+                            key={action.id}
+                            id={`preset-action-${action.id}`}
+                            onClick={() => handlePresetAction(action)}
+                            className="group/btn relative flex flex-col items-start gap-2 p-3.5 rounded-2xl border border-luxury-charcoal-700/50 bg-luxury-charcoal-900/60 hover:bg-luxury-charcoal-800/80 hover:border-luxury-gold-500/30 transition-all duration-250 text-left active:scale-[0.97]"
                           >
-                            {copiedId === msg.id ? (
-                              <Check className="h-3 w-3 text-green-500" />
-                            ) : (
-                              <Copy className="h-3 w-3" />
-                            )}
+                            <div className="flex items-center justify-between w-full">
+                              <div className="p-1.5 rounded-lg bg-luxury-gold-500/10 text-luxury-gold-500 group-hover/btn:bg-luxury-gold-500/15 transition-colors">
+                                <Icon className="h-3.5 w-3.5" />
+                              </div>
+                              <ChevronRight className="h-3 w-3 text-luxury-charcoal-600 group-hover/btn:text-luxury-gold-500 group-hover/btn:translate-x-0.5 transition-all duration-200" />
+                            </div>
+                            <div>
+                              <p className="text-[11px] font-semibold text-luxury-charcoal-200 group-hover/btn:text-white transition-colors leading-snug">{action.label}</p>
+                              <p className="text-[9px] text-luxury-charcoal-550 font-mono mt-0.5">{action.desc}</p>
+                            </div>
                           </button>
-                        )}
-                      </div>
+                        );
+                      })}
+                      {/* 5th card spans full width on its row */}
+                    </div>
+                    <div className="pt-1 flex items-center justify-between text-[8px] text-luxury-charcoal-600 uppercase tracking-widest border-t border-luxury-charcoal-800/50">
+                      <span>FMCSA Auditor · § 395 Compliant</span>
+                      <span className="flex items-center gap-1 text-luxury-gold-500/60 font-semibold">
+                        <Info className="h-2.5 w-2.5" />
+                        AI-Powered
+                      </span>
                     </div>
                   </motion.div>
-                ))}
-              </AnimatePresence>
+                )}
 
-              {/* Bot loading state */}
-              {isLoading && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="flex justify-start relative z-10"
-                >
-                  <div className="bg-luxury-charcoal-805/85 border border-luxury-charcoal-700/40 rounded-2xl rounded-tl-sm p-3.5 text-xs max-w-[85%] shadow-sm flex items-center space-x-2 text-luxury-charcoal-350">
-                    <span className="flex space-x-1">
-                      <span className="w-1.5 h-1.5 bg-luxury-gold-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                      <span className="w-1.5 h-1.5 bg-luxury-gold-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                      <span className="w-1.5 h-1.5 bg-luxury-gold-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                    </span>
-                    <span className="text-[10px] italic">Auditing compliance...</span>
-                  </div>
-                </motion.div>
-              )}
-
-              {/* Error cards state */}
-              {chatError && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="p-3.5 rounded-xl border border-red-500/20 bg-red-500/5 text-xs text-red-200 space-y-2.5 shadow-sm relative z-10"
-                >
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="h-4 w-4 text-red-400 flex-shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-semibold text-red-300">Connection Interrupted</p>
-                      <p className="text-[10px] text-red-400 mt-0.5 leading-relaxed">{chatError.message}</p>
+                {/* Loading State */}
+                {isLoading && (
+                  <motion.div
+                    key="loading"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="flex flex-col items-center justify-center gap-5 py-16 px-8"
+                  >
+                    <div className="relative">
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{ repeat: Infinity, duration: 1.4, ease: 'linear' }}
+                        className="w-10 h-10 rounded-full border-2 border-luxury-gold-500/15 border-t-luxury-gold-500"
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="w-1.5 h-1.5 rounded-full bg-luxury-gold-500/60 animate-pulse" />
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex justify-end">
+                    <div className="text-center space-y-1">
+                      <p className="text-[11px] font-semibold text-luxury-charcoal-300">{activeAction?.label}</p>
+                      <p className="text-[9px] text-luxury-charcoal-550 uppercase tracking-wider italic">Auditing compliance data...</p>
+                    </div>
+                    <div className="flex space-x-1.5">
+                      <span className="w-1.5 h-1.5 bg-luxury-gold-500/60 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="w-1.5 h-1.5 bg-luxury-gold-500/60 rounded-full animate-bounce" style={{ animationDelay: '140ms' }} />
+                      <span className="w-1.5 h-1.5 bg-luxury-gold-500/60 rounded-full animate-bounce" style={{ animationDelay: '280ms' }} />
+                    </div>
+                  </motion.div>
+                )}
+
+                {/* Response View */}
+                {!isLoading && assistantResponse && (
+                  <motion.div
+                    key="response"
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+                    className="flex flex-col p-5 gap-3.5"
+                  >
+                    {/* Action label badge */}
+                    <div className="flex items-center gap-2">
+                      {activeAction && (() => { const Icon = activeAction.icon; return <div className="p-1.5 rounded-lg bg-luxury-gold-500/10 text-luxury-gold-500"><Icon className="h-3 w-3" /></div>; })()}
+                      <div>
+                        <p className="text-[9px] uppercase tracking-widest text-luxury-gold-500 font-bold">{activeAction?.label}</p>
+                        <p className="text-[8px] text-luxury-charcoal-600 font-mono">{activeAction?.desc}</p>
+                      </div>
+                    </div>
+
+                    {/* Response Text */}
+                    <div className="p-4 rounded-2xl border border-luxury-charcoal-700/50 bg-luxury-charcoal-950/60">
+                      <p className="text-[11.5px] text-luxury-charcoal-200 leading-relaxed tracking-[0.01em] font-light whitespace-pre-wrap">
+                        {assistantResponse}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[8px] text-luxury-charcoal-600 uppercase tracking-widest">
+                      <span>AURA Compliance Engine · AI-Generated</span>
+                      <span className="text-luxury-gold-500/50">§ 395 Reference</span>
+                    </div>
+                  </motion.div>
+                )}
+
+                {/* Error State */}
+                {!isLoading && assistantError && (
+                  <motion.div
+                    key="error"
+                    initial={{ opacity: 0, scale: 0.97 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.25 }}
+                    className="flex flex-col items-center justify-center gap-4 py-14 px-8 text-center"
+                  >
+                    <div className="p-3 rounded-2xl border border-red-500/20 bg-red-500/5 text-red-400">
+                      <AlertTriangle className="h-5 w-5" />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[11px] font-semibold text-red-300">Connection Interrupted</p>
+                      <p className="text-[10px] text-luxury-charcoal-500 leading-relaxed max-w-[260px]">{assistantError}</p>
+                    </div>
                     <button
-                      onClick={handleRetry}
-                      className="px-2.5 py-1 rounded bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-[10px] font-semibold tracking-wider uppercase text-red-200 transition-colors flex items-center gap-1"
+                      onClick={() => activeAction && handlePresetAction(activeAction)}
+                      className="px-4 py-2 rounded-xl border border-red-500/20 bg-red-500/10 hover:bg-red-500/20 text-[10px] font-semibold uppercase tracking-wider text-red-300 transition-colors flex items-center gap-1.5"
                     >
                       <RotateCcw className="h-3 w-3" />
-                      <span>Retry</span>
+                      Retry
                     </button>
-                  </div>
-                </motion.div>
-              )}
+                  </motion.div>
+                )}
 
-              <div ref={chatEndRef} />
+              </AnimatePresence>
             </div>
-
-            {/* Suggestions & Input Tray */}
-            <div className="px-6 pt-3 pb-3.5 border-t border-luxury-charcoal-800/70 bg-luxury-charcoal-900/60 flex flex-col gap-2.5 relative z-10">
-
-              {/* Quick Prompt Pills (only visible when not busy) */}
-              {!isLoading && !chatError && (
-                <div className="relative w-full overflow-hidden">
-                  <div className="flex gap-2 overflow-x-auto pb-1.5 scrollbar-none snap-x select-none" style={{ maskImage: 'linear-gradient(to right, white 85%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to right, white 85%, transparent 100%)' }}>
-                    {COPILOT_SUGGESTIONS.map((pill, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => handlePillClick(pill)}
-                        className="flex-shrink-0 snap-center px-3 py-1.5 rounded-full border border-luxury-charcoal-800 bg-luxury-charcoal-800/40 text-[10px] text-luxury-charcoal-350 hover:text-luxury-gold-400 hover:border-luxury-gold-500/20 hover:bg-luxury-charcoal-800/80 transition-all duration-200"
-                      >
-                        {pill}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Chat Input Text Area & Send button */}
-              <div className="relative flex items-center">
-                <textarea
-                  ref={textareaRef}
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Ask Copilot about HOS limits..."
-                  rows={1}
-                  disabled={isLoading}
-                  className="w-full pl-4 pr-12 py-3 rounded-xl border border-luxury-charcoal-700/60 bg-luxury-charcoal-950/90 text-[11px] text-white placeholder-luxury-charcoal-550/75 focus:outline-none focus:border-luxury-gold-500/40 focus:ring-1 focus:ring-luxury-gold-500/20 resize-none transition-all disabled:opacity-50 disabled:cursor-not-allowed leading-relaxed"
-                  style={{ maxHeight: '72px' }}
-                />
-                <button
-                  onClick={() => handleSendMessage()}
-                  disabled={isLoading || !inputValue.trim()}
-                  className="absolute right-3 bottom-2.5 p-2 rounded-lg bg-luxury-gold-500 text-luxury-charcoal-950 hover:bg-luxury-gold-400 active:scale-95 transition-all duration-150 disabled:opacity-25 disabled:hover:bg-luxury-gold-500 disabled:cursor-not-allowed shadow-md"
-                >
-                  <Send className="h-3 w-3" />
-                </button>
-              </div>
-
-              {/* Footer text */}
-              <div className="flex items-center justify-between text-[8px] text-luxury-charcoal-500 uppercase tracking-widest px-0.5">
-                <span>FMCSA AUDITOR • 2026</span>
-                <span className="flex items-center gap-1 font-semibold text-luxury-gold-500/70">
-                  <Info className="h-2.5 w-2.5" /> Domain Locked
-                </span>
-              </div>
-            </div>
-
           </div>
         </motion.div>
       </motion.div>
 
       {/* Features Section */}
+
       <div id="features" className="max-w-7xl mx-auto px-6 md:px-10 lg:px-12 pt-12 pb-16 border-t border-luxury-ivory-200/50 dark:border-luxury-charcoal-700/40 relative z-10">
         <div className="text-center max-w-3xl mx-auto mb-16 space-y-4">
           <h2 className="font-serif text-3xl md:text-4xl text-luxury-charcoal-900 dark:text-white">Designed for Operational Excellence</h2>

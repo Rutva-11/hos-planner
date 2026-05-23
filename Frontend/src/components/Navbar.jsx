@@ -11,6 +11,7 @@ export default function Navbar() {
   const navLinks = [
     { name: 'Intelligent HOS', path: '/' },
     { name: 'Trip Planner', path: '/planner' },
+    { name: 'Daily Logs', path: '/logs' },
   ];
 
   return (
