@@ -14,9 +14,9 @@ const API = axios.create({
  */
 export async function calculateTripPlan({ origin, pickup, dropoff, cycleHours, startTime }) {
   const payload = {
-    origin: origin ? origin.trim() : '',
-    pickup: pickup ? pickup.trim() : '',
-    dropoff: dropoff ? dropoff.trim() : '',
+    origin: typeof origin === 'object' ? origin : (origin ? origin.trim() : ''),
+    pickup: typeof pickup === 'object' ? pickup : (pickup ? pickup.trim() : ''),
+    dropoff: typeof dropoff === 'object' ? dropoff : (dropoff ? dropoff.trim() : ''),
     current_cycle_hours: parseFloat(cycleHours),
     start_time: startTime || new Date().toISOString(),
   };

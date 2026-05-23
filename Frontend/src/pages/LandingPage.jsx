@@ -417,7 +417,7 @@ export default function LandingPage() {
 
   return (
     <div
-      className="relative min-h-[100dvh] overflow-hidden bg-luxury-ivory-50 dark:bg-luxury-charcoal-800 transition-colors duration-500 flex flex-col"
+      className="relative min-h-[100dvh] overflow-x-hidden bg-luxury-ivory-50 dark:bg-luxury-charcoal-800 transition-colors duration-500 flex flex-col"
       onMouseMove={handleMouseMove}
     >
 
@@ -449,9 +449,9 @@ export default function LandingPage() {
     px-6
     md:px-10
     lg:px-12
-    pt-28
-    md:pt-32
-    lg:pt-36
+    pt-8
+    md:pt-12
+    lg:pt-16
     pb-10
     md:pb-14
     relative
@@ -462,7 +462,7 @@ export default function LandingPage() {
     gap-8
     lg:gap-12
     xl:gap-16
-    items-start
+    items-center
   "
       >
 

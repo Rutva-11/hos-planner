@@ -2,12 +2,19 @@
 venv/
 __pycache__/
 *.pyc
-db.sqlite3
+
+# Environment
 .env
+
+# VSCode
+.vscode/
+
+# Build files
+dist/
+build/
+
+# Django static
+backend/staticfiles/
 
 # Node
 node_modules/
-dist/
-
-# Mac
-.DS_Store

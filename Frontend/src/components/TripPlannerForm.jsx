@@ -30,26 +30,28 @@ const PRESET_ROUTES = [
   }
 ];
 
-const PRESET_LOCATIONS = [
-  'Los Angeles Port, CA',
-  'Phoenix Hub, AZ',
-  'Dallas DFW Logistics, TX',
-  'Chicago Yards, IL',
-  'Indianapolis Center, IN',
-  'Atlanta Hub, GA',
-  'Seattle Port, WA',
-  'Boise Warehouse, ID',
-  'Denver Terminal, CO',
-  'Los Angeles',
-  'Phoenix',
-  'Dallas',
-  'Chicago',
-  'Indianapolis',
-  'Atlanta',
-  'Seattle',
-  'Boise',
-  'Denver'
-];
+const PRESET_COORDINATES = {
+  'Los Angeles Port, CA': { name: 'Los Angeles Port, CA', lat: 33.74, lon: -118.26 },
+  'Phoenix Hub, AZ': { name: 'Phoenix Hub, AZ', lat: 33.45, lon: -112.07 },
+  'Dallas DFW Logistics, TX': { name: 'Dallas DFW Logistics, TX', lat: 32.77, lon: -96.79 },
+  'Chicago Yards, IL': { name: 'Chicago Yards, IL', lat: 41.87, lon: -87.62 },
+  'Indianapolis Center, IN': { name: 'Indianapolis Center, IN', lat: 39.76, lon: -86.15 },
+  'Atlanta Hub, GA': { name: 'Atlanta Hub, GA', lat: 33.74, lon: -84.38 },
+  'Seattle Port, WA': { name: 'Seattle Port, WA', lat: 47.60, lon: -122.33 },
+  'Boise Warehouse, ID': { name: 'Boise Warehouse, ID', lat: 43.61, lon: -116.20 },
+  'Denver Terminal, CO': { name: 'Denver Terminal, CO', lat: 39.73, lon: -104.99 },
+  'Los Angeles': { name: 'Los Angeles Port, CA', lat: 33.74, lon: -118.26 },
+  'Phoenix': { name: 'Phoenix Hub, AZ', lat: 33.45, lon: -112.07 },
+  'Dallas': { name: 'Dallas DFW Logistics, TX', lat: 32.77, lon: -96.79 },
+  'Chicago': { name: 'Chicago Yards, IL', lat: 41.87, lon: -87.62 },
+  'Indianapolis': { name: 'Indianapolis Center, IN', lat: 39.76, lon: -86.15 },
+  'Atlanta': { name: 'Atlanta Hub, GA', lat: 33.74, lon: -84.38 },
+  'Seattle': { name: 'Seattle Port, WA', lat: 47.60, lon: -122.33 },
+  'Boise': { name: 'Boise Warehouse, ID', lat: 43.61, lon: -116.20 },
+  'Denver': { name: 'Denver Terminal, CO', lat: 39.73, lon: -104.99 }
+};
+
+const PRESET_LOCATIONS = Object.keys(PRESET_COORDINATES);
 
 const shakeVariants = {
   shake: {
@@ -64,6 +66,10 @@ export default function TripPlannerForm({ onPlanRoute, isSubmitting, apiError, o
   const [pickup, setPickup] = useState(PRESET_ROUTES[0].pickup);
   const [dropoff, setDropoff] = useState(PRESET_ROUTES[0].dropoff);
   const [cycleHours, setCycleHours] = useState(70);
+
+  const [originObj, setOriginObj] = useState(PRESET_COORDINATES[PRESET_ROUTES[0].origin]);
+  const [pickupObj, setPickupObj] = useState(PRESET_COORDINATES[PRESET_ROUTES[0].pickup]);
+  const [dropoffObj, setDropoffObj] = useState(PRESET_COORDINATES[PRESET_ROUTES[0].dropoff]);
   
   const [touched, setTouched] = useState({
     origin: false,
@@ -81,9 +87,38 @@ export default function TripPlannerForm({ onPlanRoute, isSubmitting, apiError, o
     dropoff: PRESET_ROUTES[0].dropoff
   });
 
+  const lastSelectedObjects = useRef({
+    origin: PRESET_COORDINATES[PRESET_ROUTES[0].origin],
+    pickup: PRESET_COORDINATES[PRESET_ROUTES[0].pickup],
+    dropoff: PRESET_COORDINATES[PRESET_ROUTES[0].dropoff]
+  });
+
   // Clear API errors from parent when the user updates input fields
-  const handleInputChange = (field, value, setter) => {
+  const handleInputChange = (field, value, setter, objSetter) => {
     setter(value);
+    
+    // Auto-resolve manually typed values if they match presets or the last selected object
+    const lowerVal = value.trim().toLowerCase();
+    let matchedObj = null;
+    
+    if (PRESET_COORDINATES[value]) {
+      matchedObj = PRESET_COORDINATES[value];
+    } else {
+      const foundPresetKey = Object.keys(PRESET_COORDINATES).find(
+        key => key.toLowerCase() === lowerVal
+      );
+      if (foundPresetKey) {
+        matchedObj = PRESET_COORDINATES[foundPresetKey];
+      } else if (
+        lastSelectedObjects.current[field] &&
+        lastSelectedObjects.current[field].name.toLowerCase() === lowerVal
+      ) {
+        matchedObj = lastSelectedObjects.current[field];
+      }
+    }
+    
+    objSetter(matchedObj);
+    
     setTouched(prev => ({ ...prev, [field]: true }));
     if (onClearErrors) {
       onClearErrors();
@@ -180,12 +215,27 @@ export default function TripPlannerForm({ onPlanRoute, isSubmitting, apiError, o
 
   const handlePresetSelect = (preset) => {
     if (isSubmitting) return;
+    
+    const presetOriginObj = PRESET_COORDINATES[preset.origin];
+    const presetPickupObj = PRESET_COORDINATES[preset.pickup];
+    const presetDropoffObj = PRESET_COORDINATES[preset.dropoff];
+
     lastSelectedValues.current.origin = preset.origin;
     lastSelectedValues.current.pickup = preset.pickup;
     lastSelectedValues.current.dropoff = preset.dropoff;
+
+    lastSelectedObjects.current.origin = presetOriginObj;
+    lastSelectedObjects.current.pickup = presetPickupObj;
+    lastSelectedObjects.current.dropoff = presetDropoffObj;
+
     setOrigin(preset.origin);
     setPickup(preset.pickup);
     setDropoff(preset.dropoff);
+    
+    setOriginObj(presetOriginObj);
+    setPickupObj(presetPickupObj);
+    setDropoffObj(presetDropoffObj);
+
     setCycleHours(preset.cycle);
     
     // Reset validation states
@@ -194,9 +244,9 @@ export default function TripPlannerForm({ onPlanRoute, isSubmitting, apiError, o
     if (onClearErrors) onClearErrors();
 
     onPlanRoute({
-      origin: preset.origin,
-      pickup: preset.pickup,
-      dropoff: preset.dropoff,
+      origin: presetOriginObj || preset.origin,
+      pickup: presetPickupObj || preset.pickup,
+      dropoff: presetDropoffObj || preset.dropoff,
       cycleHours: preset.cycle
     });
   };
@@ -211,7 +261,27 @@ export default function TripPlannerForm({ onPlanRoute, isSubmitting, apiError, o
       return;
     }
 
-    onPlanRoute({ origin, pickup, dropoff, cycleHours });
+    // Resolve objects in case they are not set but match presets
+    let finalOriginObj = originObj;
+    let finalPickupObj = pickupObj;
+    let finalDropoffObj = dropoffObj;
+
+    if (!finalOriginObj && PRESET_COORDINATES[origin]) {
+      finalOriginObj = PRESET_COORDINATES[origin];
+    }
+    if (!finalPickupObj && PRESET_COORDINATES[pickup]) {
+      finalPickupObj = PRESET_COORDINATES[pickup];
+    }
+    if (!finalDropoffObj && PRESET_COORDINATES[dropoff]) {
+      finalDropoffObj = PRESET_COORDINATES[dropoff];
+    }
+
+    onPlanRoute({
+      origin: finalOriginObj || origin,
+      pickup: finalPickupObj || pickup,
+      dropoff: finalDropoffObj || dropoff,
+      cycleHours
+    });
   };
 
   const originError = getFieldError('origin');
@@ -271,10 +341,17 @@ export default function TripPlannerForm({ onPlanRoute, isSubmitting, apiError, o
         <AutocompleteInput
           label="Driver Location (Origin)"
           value={origin}
-          onChange={(val) => handleInputChange('origin', val, setOrigin)}
+          onChange={(val) => handleInputChange('origin', val, setOrigin, setOriginObj)}
           onSelectSuggestion={(suggestion) => {
+            const obj = {
+              name: suggestion.name,
+              lat: suggestion.lat,
+              lon: suggestion.lon
+            };
             lastSelectedValues.current.origin = suggestion.name;
+            lastSelectedObjects.current.origin = obj;
             setOrigin(suggestion.name);
+            setOriginObj(obj);
           }}
           onClearErrors={onClearErrors}
           placeholder="e.g. Los Angeles Port, CA"
@@ -292,10 +369,17 @@ export default function TripPlannerForm({ onPlanRoute, isSubmitting, apiError, o
         <AutocompleteInput
           label="Pickup Hub"
           value={pickup}
-          onChange={(val) => handleInputChange('pickup', val, setPickup)}
+          onChange={(val) => handleInputChange('pickup', val, setPickup, setPickupObj)}
           onSelectSuggestion={(suggestion) => {
+            const obj = {
+              name: suggestion.name,
+              lat: suggestion.lat,
+              lon: suggestion.lon
+            };
             lastSelectedValues.current.pickup = suggestion.name;
+            lastSelectedObjects.current.pickup = obj;
             setPickup(suggestion.name);
+            setPickupObj(obj);
           }}
           onClearErrors={onClearErrors}
           placeholder="e.g. Phoenix Logistics Park, AZ"
@@ -313,10 +397,17 @@ export default function TripPlannerForm({ onPlanRoute, isSubmitting, apiError, o
         <AutocompleteInput
           label="Final Dropoff Destination"
           value={dropoff}
-          onChange={(val) => handleInputChange('dropoff', val, setDropoff)}
+          onChange={(val) => handleInputChange('dropoff', val, setDropoff, setDropoffObj)}
           onSelectSuggestion={(suggestion) => {
+            const obj = {
+              name: suggestion.name,
+              lat: suggestion.lat,
+              lon: suggestion.lon
+            };
             lastSelectedValues.current.dropoff = suggestion.name;
+            lastSelectedObjects.current.dropoff = obj;
             setDropoff(suggestion.name);
+            setDropoffObj(obj);
           }}
           onClearErrors={onClearErrors}
           placeholder="e.g. Dallas DFW Logistics, TX"
@@ -380,12 +471,12 @@ export default function TripPlannerForm({ onPlanRoute, isSubmitting, apiError, o
 
         {/* Submit Button */}
         <motion.button
-          whileHover={isFormValid && !isSubmitting && !(rateLimitCountdown > 0) ? { scale: 1.01 } : {}}
-          whileTap={isFormValid && !isSubmitting && !(rateLimitCountdown > 0) ? { scale: 0.99 } : {}}
+          whileHover={isFormValid && !isSubmitting && !(rateLimitCountdown > 0) && !apiError ? { scale: 1.01 } : {}}
+          whileTap={isFormValid && !isSubmitting && !(rateLimitCountdown > 0) && !apiError ? { scale: 0.99 } : {}}
           type="submit"
-          disabled={!isFormValid || isSubmitting || rateLimitCountdown > 0}
+          disabled={!isFormValid || isSubmitting || rateLimitCountdown > 0 || !!apiError}
           className={`w-full mt-4 py-4 rounded-xl text-xs font-semibold tracking-widest uppercase transition-all duration-300 flex items-center justify-center gap-2 ${
-            !isFormValid || isSubmitting || rateLimitCountdown > 0
+            !isFormValid || isSubmitting || rateLimitCountdown > 0 || apiError
               ? 'bg-luxury-ivory-300 dark:bg-luxury-charcoal-700/50 text-luxury-charcoal-400 dark:text-luxury-charcoal-500 cursor-not-allowed border border-transparent'
               : 'bg-luxury-gold-500 text-luxury-charcoal-950 hover:bg-luxury-gold-600 hover:text-white dark:hover:bg-luxury-gold-400 shadow-premium-light dark:shadow-glow'
           }`}

@@ -64,10 +64,21 @@ class TripPlanner:
         pickup: string location name
         dropoff: string location name
         """
-        # Geocode inputs on the backend
-        current_location = RouteService.geocode(origin)
-        pickup_location = RouteService.geocode(pickup)
-        dropoff_location = RouteService.geocode(dropoff)
+        # Geocode inputs on the backend if they are strings, otherwise use them directly
+        if isinstance(origin, dict):
+            current_location = origin
+        else:
+            current_location = RouteService.geocode(origin)
+
+        if isinstance(pickup, dict):
+            pickup_location = pickup
+        else:
+            pickup_location = RouteService.geocode(pickup)
+
+        if isinstance(dropoff, dict):
+            dropoff_location = dropoff
+        else:
+            dropoff_location = RouteService.geocode(dropoff)
 
         if start_time is None:
             start_time = timezone.now()

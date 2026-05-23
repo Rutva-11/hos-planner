@@ -43,7 +43,7 @@ class RouteService:
         "DC": "District of Columbia"
     }
 
-    # High-fidelity mock database of 16 major cities in the US and India with coordinate data
+    # High-fidelity mock database of major cities in the US, India, Europe, Australia, and Canada with coordinate data
     MOCK_DATABASE = [
         {"name": "Seattle, Washington, USA", "lat": 47.6062, "lon": -122.3321, "city": "Seattle", "state": "Washington", "country": "USA"},
         {"name": "Phoenix, Arizona, USA", "lat": 33.4484, "lon": -112.0740, "city": "Phoenix", "state": "Arizona", "country": "USA"},
@@ -60,7 +60,12 @@ class RouteService:
         {"name": "Bengaluru, Karnataka, India", "lat": 12.9716, "lon": 77.5946, "city": "Bengaluru", "state": "Karnataka", "country": "India"},
         {"name": "Chennai, Tamil Nadu, India", "lat": 13.0827, "lon": 80.2707, "city": "Chennai", "state": "Tamil Nadu", "country": "India"},
         {"name": "Kolkata, West Bengal, India", "lat": 22.5726, "lon": 88.3639, "city": "Kolkata", "state": "West Bengal", "country": "India"},
-        {"name": "Hyderabad, Telangana, India", "lat": 17.3850, "lon": 78.4867, "city": "Hyderabad", "state": "Telangana", "country": "India"}
+        {"name": "Hyderabad, Telangana, India", "lat": 17.3850, "lon": 78.4867, "city": "Hyderabad", "state": "Telangana", "country": "India"},
+        {"name": "Berlin, Germany", "lat": 52.5200, "lon": 13.4049, "city": "Berlin", "state": "Berlin", "country": "Germany"},
+        {"name": "Munich, Germany", "lat": 48.1351, "lon": 11.5820, "city": "Munich", "state": "Bavaria", "country": "Germany"},
+        {"name": "Sydney, New South Wales, Australia", "lat": -33.8688, "lon": 151.2093, "city": "Sydney", "state": "New South Wales", "country": "Australia"},
+        {"name": "Melbourne, Victoria, Australia", "lat": -37.8136, "lon": 144.9631, "city": "Melbourne", "state": "Victoria", "country": "Australia"},
+        {"name": "Toronto, Ontario, Canada", "lat": 43.6532, "lon": -79.3832, "city": "Toronto", "state": "Ontario", "country": "Canada"}
     ]
 
     # Geographic indicators for validation to reject impossible contradictions (excluding common short words like "in", "or", etc.)
@@ -391,6 +396,36 @@ class RouteService:
         }
 
     @classmethod
+    def is_in_ocean(cls, lat, lon, name=""):
+        try:
+            lat = float(lat)
+            lon = float(lon)
+        except (ValueError, TypeError):
+            return True
+            
+        if name:
+            normalized_name = name.lower()
+            ocean_keywords = ["ocean", "sea", "gulf", "bay", "strait", "channel", "atlantic", "pacific", "indian", "caribbean"]
+            for kw in ocean_keywords:
+                if re.search(r'\b' + re.escape(kw) + r'\b', normalized_name):
+                    if not any(city in normalized_name for city in ["seattle", "ocean city", "oceanside", "chelsea", "swansea"]):
+                        return True
+                        
+        # Atlantic Ocean region (Miami is lon -80.19, Bahamas is lon -77.0)
+        if (0.0 <= lat < 30.0) and (-79.0 < lon <= -10.0):
+            return True
+        if (30.0 <= lat < 35.0) and (-74.0 < lon <= -10.0):
+            return True
+        if (35.0 <= lat <= 45.0) and (-69.0 < lon <= -10.0):
+            return True
+            
+        # Pacific Ocean region (west of US mainland):
+        if (24.0 <= lat <= 50.0) and (-180.0 <= lon <= -125.0):
+            return True
+            
+        return False
+
+    @classmethod
     def get_drivable_continent(cls, lat, lon):
         """
         Determines the drivable zone (continent) for coordinate to enforce routing constraints.
@@ -400,6 +435,12 @@ class RouteService:
             lon = float(lon)
         except (ValueError, TypeError):
             return "other"
+            
+        if cls.is_in_ocean(lat, lon):
+            return "ocean"
+
+        if (18.0 <= lat <= 23.0) and (-161.0 <= lon <= -154.0):
+            return "hawaii"
             
         if (7.0 <= lat <= 85.0) and (-170.0 <= lon <= -50.0):
             return "north_america"
@@ -414,6 +455,14 @@ class RouteService:
             return "australia"
             
         return "other"
+
+    @classmethod
+    def get_closest_mock_city(cls, lat, lon):
+        for city in cls.MOCK_DATABASE:
+            dist = cls.haversine_distance(lat, lon, city["lat"], city["lon"])
+            if dist < 50000: # 50 km tolerance
+                return city
+        return None
 
     @classmethod
     def _make_cache_key(cls, prefix, query):
@@ -441,6 +490,14 @@ class RouteService:
         
         if not cls.validate_geographic_combination(query):
             raise GeocodingException("Geocoding failed due to contradictory geographic combination.")
+
+        query_lower = query.lower().strip()
+        if "atlantic ocean" in query_lower or "pacific ocean" in query_lower or "ocean" in query_lower:
+            if not any(city in query_lower for city in ["seattle", "ocean city", "oceanside", "chelsea", "swansea"]):
+                raise GeocodingException(f"Resolved location '{query}' is in a marine or island region with no commercial trucking road access.")
+        
+        if "hawaii" in query_lower or query_lower == "hi" or " hi" in query_lower or ", hi" in query_lower:
+            raise GeocodingException(f"Resolved location '{query}' is in a marine or island region with no commercial trucking road access.")
 
         normalized = query.lower().strip()
         
@@ -514,6 +571,7 @@ class RouteService:
             raise GeocodingException(f"Could not resolve location: '{query}'. Please verify spelling or specify city/state.")
             
         candidates = []
+        marine_rejected = False
         for idx, feat in enumerate(features):
             coords = feat.get("geometry", {}).get("coordinates", [])
             if len(coords) < 2:
@@ -521,6 +579,11 @@ class RouteService:
             properties = feat.get("properties", {})
             formatted_name = cls.format_location_label(properties)
             if not formatted_name:
+                continue
+                
+            lat_cand, lon_cand = coords[1], coords[0]
+            if cls.is_in_ocean(lat_cand, lon_cand, formatted_name) or cls.get_drivable_continent(lat_cand, lon_cand) in ["hawaii", "ocean"]:
+                marine_rejected = True
                 continue
                 
             candidate = {
@@ -539,6 +602,8 @@ class RouteService:
             candidates.append(candidate)
             
         if not candidates:
+            if marine_rejected:
+                raise GeocodingException(f"Resolved location '{query}' is in a marine or island region with no commercial trucking road access.")
             raise GeocodingException(f"Could not resolve location: '{query}'. Please verify spelling or specify city/state.")
             
         candidates.sort(key=lambda x: cls.score_suggestion(x, query), reverse=True)
@@ -580,9 +645,14 @@ class RouteService:
 
         # Prevent ocean-crossing/continent-jumping routes using get_drivable_continent
         regions = {cls.get_drivable_continent(pt[0], pt[1]) for pt in waypoints}
-        if len(regions) > 1 or "other" in regions:
-            logger.warning(f"Rejected impossible route across continents or unknown regions: {waypoints}")
-            raise RoutingException("No drivable road route exists between the selected locations (routes across oceans/continents are impossible for truck driving).")
+        if "hawaii" in regions:
+            raise RoutingException("No drivable road route exists between the selected locations (routes to/from Hawaii are impossible for truck driving).")
+        if "ocean" in regions:
+            raise RoutingException("No drivable road route exists between the selected locations (routes crossing or entering oceans are impossible for truck driving).")
+        if "other" in regions:
+            raise RoutingException("No drivable road route exists between the selected locations (unroutable or isolated regions).")
+        if len(regions) > 1:
+            raise RoutingException("No drivable road route exists between the selected locations (routes across different continents or landmasses are impossible for truck driving).")
 
         waypoints_json = json.dumps(waypoints, sort_keys=True)
         waypoints_hash = hashlib.md5(waypoints_json.encode('utf-8')).hexdigest()
@@ -601,6 +671,13 @@ class RouteService:
         
         if not api_key:
             logger.info("ORS API key is missing. Operating in Mock Fallback Mode for routing calculation.")
+            
+            # Restrict mock routing to known mock cities only to avoid fake routing
+            for idx, pt in enumerate(waypoints):
+                closest_city = cls.get_closest_mock_city(pt[0], pt[1])
+                if not closest_city:
+                    logger.warning(f"Mock routing rejected because waypoint {idx} at ({pt[0]}, {pt[1]}) is not near any predefined hub.")
+                    raise RoutingException("Routing API is currently offline/unavailable, and custom route calculation is disabled without an API key.")
             
             legs = []
             total_distance = 0.0
@@ -651,6 +728,15 @@ class RouteService:
                 "polyline": complete_polyline,
                 "legs": legs
             }
+            # Enforce validations on mock result to verify correctness
+            if len(complete_polyline) < 15:
+                if total_distance > 3200:
+                    raise RoutingException("Calculated route has insufficient road geometry (detected straight-line fallback).")
+            if total_distance <= 0:
+                raise RoutingException("Calculated route distance is zero or negative.")
+            if len(legs) < len(waypoints) - 1:
+                raise RoutingException("Route calculation returned insufficient route segments.")
+                
             cache.set(cache_key, result, timeout=86400)
             return result
             
@@ -711,14 +797,46 @@ class RouteService:
             
         polyline = [[coord[1], coord[0]] for coord in geometry["coordinates"]]
         
+        # Enforce valid road coordinate arrays
+        for idx, coord in enumerate(polyline):
+            if not isinstance(coord, list) or len(coord) < 2:
+                raise RoutingException("Routing service returned invalid coordinate structure in route geometry.")
+            try:
+                lat_c = float(coord[0])
+                lon_c = float(coord[1])
+            except (ValueError, TypeError):
+                raise RoutingException("Routing service returned non-numeric coordinates in route geometry.")
+            if not (-90.0 <= lat_c <= 90.0) or not (-180.0 <= lon_c <= 180.0):
+                raise RoutingException("Routing service returned out-of-bounds coordinates in route geometry.")
+
         distance_meters = summary.get("distance", 0.0)
         duration_seconds = summary.get("duration", 0.0)
+        distance_miles = distance_meters / 1609.344
+
+        # Enforce sufficient road geometry (density of points)
+        if len(polyline) < 15:
+            if distance_meters > 3200:
+                raise RoutingException("Calculated route has insufficient road geometry (detected straight-line fallback).")
+
+        # Enforce distance realism
+        straight_line_dist = 0.0
+        for i in range(len(waypoints) - 1):
+            straight_line_dist += cls.haversine_distance(waypoints[i][0], waypoints[i][1], waypoints[i+1][0], waypoints[i+1][1])
         
+        if distance_meters < straight_line_dist * 0.95:
+            raise RoutingException(f"Calculated route distance ({distance_miles:.1f} miles) is unrealistic compared to straight-line distance ({straight_line_dist / 1609.344:.1f} miles).")
+        if distance_meters > 15000000:
+            raise RoutingException("Calculated route distance exceeds realistic limits for domestic trucking.")
         if distance_meters <= 0:
             raise RoutingException("Calculated route distance is zero or negative.")
-            
+
         legs = []
         segments = properties.get("segments", [])
+        
+        # Enforce segment count exceeds minimum threshold
+        if len(segments) < len(waypoints) - 1:
+            raise RoutingException("Route calculation returned insufficient route segments.")
+
         for i, segment in enumerate(segments):
             steps = segment.get("steps", [])
             if steps:
@@ -857,6 +975,9 @@ class RouteService:
                     "countrycode": properties.get("countrycode") or "",
                     "raw_index": idx
                 }
+                
+                if cls.is_in_ocean(coords[1], coords[0], formatted_label) or cls.get_drivable_continent(coords[1], coords[0]) in ["hawaii", "ocean"]:
+                    continue
                 
                 if not any(r["name"].lower() == formatted_label.lower() or 
                            cls.haversine_distance(r["lat"], r["lon"], coords[1], coords[0]) < 1000 

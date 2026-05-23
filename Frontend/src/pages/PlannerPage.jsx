@@ -83,12 +83,16 @@ export default function PlannerPage() {
       }
 
       const code = err.code || 'api_error';
-      if (code === 'service_unavailable') {
-        message = 'Routing service temporarily unavailable';
-      } else if (code === 'routing_failed') {
-        message = 'Invalid route selected';
-      } else if (code === 'rate_limited' || err.status === 429) {
-        message = 'API limit reached, retry shortly';
+      if (!err.message || err.message === 'Failed to calculate trip plan.') {
+        if (code === 'service_unavailable') {
+          message = 'Routing service temporarily unavailable';
+        } else if (code === 'routing_failed') {
+          message = 'Invalid route selected';
+        } else if (code === 'rate_limited' || err.status === 429) {
+          message = 'API limit reached, retry shortly';
+        }
+      } else {
+        message = err.message;
       }
 
       if (err.status === 429 || code === 'rate_limited') {
@@ -228,26 +232,46 @@ export default function PlannerPage() {
                 className={`p-6 md:p-8 rounded-3xl border backdrop-blur-md shadow-premium-light dark:shadow-premium-dark flex flex-col md:flex-row items-start md:items-center justify-between gap-6 ${
                   apiError.status === 429 || apiError.code === 'rate_limited'
                     ? 'border-luxury-gold-500/30 bg-luxury-gold-500/5 dark:bg-luxury-gold-950/10'
-                    : 'border-red-500/20 bg-red-50 dark:bg-red-950/20'
+                    : 'border-red-500/30 dark:border-red-500/20 bg-white/90 dark:bg-luxury-charcoal-900/90'
                 }`}
               >
-                <div className="flex gap-4 items-start w-full md:w-auto">
-                  <div className={`p-3.5 rounded-2xl flex-shrink-0 animate-pulse ${
+                <div className="flex gap-5 items-start w-full md:w-auto">
+                  <div className={`p-4 rounded-2xl flex-shrink-0 flex items-center justify-center ${
                     apiError.status === 429 || apiError.code === 'rate_limited'
                       ? 'bg-luxury-gold-500/10 text-luxury-gold-500'
-                      : 'bg-red-100 dark:bg-red-950/40 text-red-500'
+                      : 'bg-red-500/10 dark:bg-red-500/20 text-red-500'
                   }`}>
-                    <ShieldAlert className="h-6 w-6" />
+                    <ShieldAlert className="h-6 w-6 animate-pulse" />
                   </div>
                   <div className="flex-grow">
+                    <div className="flex items-center gap-2 mb-2 flex-wrap">
+                      <span className="px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400 border border-red-200 dark:border-red-900/50">
+                        Logistics Exception
+                      </span>
+                      <span className="text-[10px] text-luxury-charcoal-450 dark:text-luxury-charcoal-400 font-mono uppercase tracking-wider">
+                        STATUS: REJECTED
+                      </span>
+                    </div>
                     <h3 className="font-serif text-lg text-luxury-charcoal-900 dark:text-white font-medium">
                       {apiError.status === 429 || apiError.code === 'rate_limited'
                         ? 'Rate Limit Cooldown Active'
-                        : 'Compliance Telemetry Error'}
+                        : 'Commercial Freight Route Rejected'}
                     </h3>
-                    <p className="text-xs text-luxury-charcoal-550 dark:text-luxury-charcoal-400 mt-1 max-w-xl font-light leading-relaxed">
+                    <p className="text-xs text-luxury-charcoal-550 dark:text-luxury-charcoal-350 mt-1.5 max-w-xl font-light leading-relaxed">
                       {apiError.message}
                     </p>
+                    
+                    <div className="mt-4 pt-3.5 border-t border-luxury-ivory-200 dark:border-luxury-charcoal-700/50 text-[11px] text-luxury-charcoal-500 dark:text-luxury-charcoal-400">
+                      <p className="font-semibold text-luxury-charcoal-700 dark:text-luxury-ivory-200 mb-1 flex items-center gap-1">
+                        <span>Compliance Restrictions Applied:</span>
+                      </p>
+                      <ul className="list-disc pl-5 space-y-1 font-light">
+                        <li>All straight-line polyline rendering fallbacks are strictly disabled.</li>
+                        <li>Routing telemetry requires continuous road path coordinates.</li>
+                        <li>Marine transitions (ocean crossings/ferry corridors) are rejected.</li>
+                        <li>Validation requires realistic driving distances and segment counts.</li>
+                      </ul>
+                    </div>
                     
                     {(apiError.status === 429 || apiError.code === 'rate_limited') && rateLimitCountdown > 0 && (
                       <div className="mt-4 max-w-md">

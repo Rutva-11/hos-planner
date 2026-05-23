@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Trip, Stop, DailyLog
+from .services.route_service import RouteService
 import json
 
 class StopSerializer(serializers.ModelSerializer):
@@ -65,35 +66,56 @@ class TripSerializer(serializers.ModelSerializer):
 
 
 class TripRequestSerializer(serializers.Serializer):
-    origin = serializers.CharField(required=True, allow_blank=False)
-    pickup = serializers.CharField(required=True, allow_blank=False)
-    dropoff = serializers.CharField(required=True, allow_blank=False)
+    origin = serializers.JSONField(required=True)
+    pickup = serializers.JSONField(required=True)
+    dropoff = serializers.JSONField(required=True)
     current_cycle_hours = serializers.FloatField(required=False, default=70.0)
     start_time = serializers.DateTimeField(required=False, allow_null=True)
 
+    def _validate_location(self, value, field_name):
+        if isinstance(value, str):
+            val = value.strip()
+            if not val:
+                raise serializers.ValidationError(f"{field_name} location description cannot be empty.")
+            if len(val) < 2:
+                raise serializers.ValidationError(f"{field_name} location description must be at least 2 characters long.")
+            return val
+        elif isinstance(value, dict):
+            name = value.get("name")
+            lat = value.get("lat")
+            lon = value.get("lon")
+            if not name or not isinstance(name, str) or not name.strip():
+                raise serializers.ValidationError(f"{field_name} name is required and must be a string.")
+            if lat is None or lon is None:
+                raise serializers.ValidationError(f"{field_name} lat/lon coordinates are required.")
+            try:
+                lat_val = float(lat)
+                lon_val = float(lon)
+            except (ValueError, TypeError):
+                raise serializers.ValidationError(f"{field_name} lat/lon must be valid float coordinates.")
+            if not (-90.0 <= lat_val <= 90.0) or not (-180.0 <= lon_val <= 180.0):
+                raise serializers.ValidationError(f"{field_name} lat/lon coordinates are out of bounds.")
+                
+            # Perform ocean & Hawaii checks
+            if RouteService.is_in_ocean(lat_val, lon_val, name) or RouteService.get_drivable_continent(lat_val, lon_val) in ["hawaii", "ocean"]:
+                raise serializers.ValidationError(f"Resolved location '{name}' is in a marine or island region with no commercial trucking road access.")
+                
+            return {
+                "name": name.strip(),
+                "lat": lat_val,
+                "lon": lon_val
+            }
+        else:
+            raise serializers.ValidationError(f"Invalid format for {field_name}. Must be a string or a coordinate object.")
+
     def validate_origin(self, value):
-        val = value.strip()
-        if not val:
-            raise serializers.ValidationError("Origin location description cannot be empty.")
-        if len(val) < 2:
-            raise serializers.ValidationError("Origin location description must be at least 2 characters long.")
-        return val
+        return self._validate_location(value, "Origin")
 
     def validate_pickup(self, value):
-        val = value.strip()
-        if not val:
-            raise serializers.ValidationError("Pickup location description cannot be empty.")
-        if len(val) < 2:
-            raise serializers.ValidationError("Pickup location description must be at least 2 characters long.")
-        return val
+        return self._validate_location(value, "Pickup")
 
     def validate_dropoff(self, value):
-        val = value.strip()
-        if not val:
-            raise serializers.ValidationError("Dropoff location description cannot be empty.")
-        if len(val) < 2:
-            raise serializers.ValidationError("Dropoff location description must be at least 2 characters long.")
-        return val
+        return self._validate_location(value, "Dropoff")
 
     def validate_current_cycle_hours(self, value):
         if value is None:
@@ -105,15 +127,19 @@ class TripRequestSerializer(serializers.Serializer):
         return value
 
     def validate(self, data):
-        origin = data.get('origin', '').strip().lower()
-        pickup = data.get('pickup', '').strip().lower()
-        dropoff = data.get('dropoff', '').strip().lower()
+        origin_val = data.get('origin')
+        pickup_val = data.get('pickup')
+        dropoff_val = data.get('dropoff')
+        
+        origin_name = origin_val.get('name', '').strip().lower() if isinstance(origin_val, dict) else str(origin_val).strip().lower()
+        pickup_name = pickup_val.get('name', '').strip().lower() if isinstance(pickup_val, dict) else str(pickup_val).strip().lower()
+        dropoff_name = dropoff_val.get('name', '').strip().lower() if isinstance(dropoff_val, dict) else str(dropoff_val).strip().lower()
 
-        if origin == pickup:
+        if origin_name == pickup_name:
             raise serializers.ValidationError({"pickup": "Pickup location cannot be identical to the origin location."})
-        if pickup == dropoff:
+        if pickup_name == dropoff_name:
             raise serializers.ValidationError({"dropoff": "Dropoff location cannot be identical to the pickup location."})
-        if origin == dropoff:
+        if origin_name == dropoff_name:
             raise serializers.ValidationError({"dropoff": "Dropoff location cannot be identical to the origin location."})
         
         return data

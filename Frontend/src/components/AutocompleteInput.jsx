@@ -142,6 +142,20 @@ export default function AutocompleteInput({
   const handleBlur = (e) => {
     if (containerRef.current && !containerRef.current.contains(e.relatedTarget)) {
       setIsOpen(false);
+      
+      const trimmed = inputValue.trim().toLowerCase();
+      const isPreset = presets.some(p => p.toLowerCase() === trimmed);
+      const isConfirmed = trimmed === lastConfirmedValue.current.trim().toLowerCase();
+      
+      if (trimmed !== "" && !isPreset && !isConfirmed) {
+        // Revert to last confirmed value if current typing is unverified
+        setInputValue(lastConfirmedValue.current);
+        onChange(lastConfirmedValue.current);
+      } else if (trimmed === "") {
+        // Clear value if empty
+        lastConfirmedValue.current = "";
+        onChange("");
+      }
     }
   };
 
@@ -218,7 +232,10 @@ export default function AutocompleteInput({
                     <button
                       key={index}
                       type="button"
-                      onClick={() => handleSelect(suggestion)}
+                      onMouseDown={(e) => {
+                        e.preventDefault(); // Prevents input blur before selection
+                        handleSelect(suggestion);
+                      }}
                       onMouseEnter={() => setActiveIndex(index)}
                       className={`w-full text-left px-4 py-3 text-xs transition-colors border-b border-luxury-ivory-200/40 dark:border-luxury-charcoal-800/45 last:border-b-0 flex items-center gap-2 ${
                         isHovered 

@@ -82,6 +82,28 @@ class TripRequestSerializerTestCase(TestCase):
         self.assertFalse(serializer.is_valid())
         self.assertIn("current_cycle_hours", serializer.errors)
 
+    def test_valid_input_coordinates(self):
+        data = {
+            "origin": {"name": "Los Angeles Port, CA", "lat": 33.74, "lon": -118.26},
+            "pickup": {"name": "Phoenix Hub, AZ", "lat": 33.45, "lon": -112.07},
+            "dropoff": {"name": "Dallas DFW Logistics, TX", "lat": 32.77, "lon": -96.79},
+            "current_cycle_hours": 70.0
+        }
+        serializer = TripRequestSerializer(data=data)
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(serializer.validated_data["origin"]["lat"], 33.74)
+        
+    def test_invalid_input_coordinates_bounds(self):
+        data = {
+            "origin": {"name": "Invalid Port", "lat": 100.0, "lon": -118.26},
+            "pickup": {"name": "Phoenix Hub, AZ", "lat": 33.45, "lon": -112.07},
+            "dropoff": {"name": "Dallas DFW Logistics, TX", "lat": 32.77, "lon": -96.79},
+            "current_cycle_hours": 70.0
+        }
+        serializer = TripRequestSerializer(data=data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("origin", serializer.errors)
+
 class RouteServiceTestCase(TestCase):
     def setUp(self):
         from django.core.cache import cache
@@ -528,6 +550,76 @@ class RouteServiceTestCase(TestCase):
         self.assertEqual(len(result["legs"]), 1)
         self.assertEqual(result["legs"][0]["distance_meters"], result["distance_meters"])
         self.assertEqual(result["legs"][0]["duration_seconds"], result["duration_seconds"])
+
+    @patch("trips.services.route_service.os.getenv")
+    def test_routing_india_to_usa(self, mock_getenv):
+        # India -> USA coordinates should raise RoutingException
+        mock_getenv.return_value = "fake_key"
+        india_coords = [19.0760, 72.8777] # Mumbai
+        usa_coords = [34.0522, -118.2437] # LA
+        with self.assertRaises(RoutingException):
+            RouteService.get_route([india_coords, usa_coords])
+
+    def test_geocoding_miami_to_atlantic_ocean(self):
+        # Miami is allowed, but "Atlantic Ocean" should raise GeocodingException
+        RouteService.geocode("Miami, Florida, USA") # should succeed
+        with self.assertRaises(GeocodingException):
+            RouteService.geocode("Atlantic Ocean")
+
+    def test_geocoding_hawaii_to_mainland(self):
+        # Hawaii should raise GeocodingException
+        with self.assertRaises(GeocodingException):
+            RouteService.geocode("Hawaii")
+            
+        # Routing to/from Hawaii coordinates should raise RoutingException
+        hawaii_coords = [21.3099, -157.8581]
+        seattle_coords = [47.6062, -122.3321]
+        with self.assertRaises(RoutingException):
+            RouteService.get_route([hawaii_coords, seattle_coords])
+
+    @patch("trips.services.route_service.os.getenv")
+    def test_routing_insufficient_road_geometry_and_straight_lines(self, mock_getenv):
+        # A route response with too few coordinates should raise RoutingException (insufficient geometry)
+        mock_getenv.return_value = "fake_key"
+        with patch("trips.services.route_service.requests.post") as mock_post:
+            mock_post.return_value = type('Response', (), {
+                'status_code': 200,
+                'json': lambda: {
+                    "features": [{
+                        "geometry": {
+                            "coordinates": [[-118.26, 33.74], [-112.07, 33.45]] # Only 2 coordinates (straight line)
+                        },
+                        "properties": {
+                            "summary": {"distance": 500000.0, "duration": 20000.0},
+                            "segments": [{"distance": 500000.0, "duration": 20000.0}]
+                        }
+                    }]
+                }
+            })
+            with self.assertRaises(RoutingException):
+                RouteService.get_route([[33.74, -118.26], [33.45, -112.07]])
+
+    @patch("trips.services.route_service.os.getenv")
+    def test_routing_insufficient_segments(self, mock_getenv):
+        # A route response with insufficient segments should raise RoutingException
+        mock_getenv.return_value = "fake_key"
+        with patch("trips.services.route_service.requests.post") as mock_post:
+            mock_post.return_value = type('Response', (), {
+                'status_code': 200,
+                'json': lambda: {
+                    "features": [{
+                        "geometry": {
+                            "coordinates": [[-118.26, 33.74], [-112.07, 33.45]] * 10
+                        },
+                        "properties": {
+                            "summary": {"distance": 500000.0, "duration": 20000.0},
+                            "segments": [] # 0 segments returned
+                        }
+                    }]
+                }
+            })
+            with self.assertRaises(RoutingException):
+                RouteService.get_route([[33.74, -118.26], [33.45, -112.07], [32.77, -96.79]])
 
 class CopilotChatTestCase(TestCase):
     def test_copilot_chat_missing_message(self):
