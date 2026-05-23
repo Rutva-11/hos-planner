@@ -623,35 +623,77 @@ class RouteServiceTestCase(TestCase):
 
 class CopilotChatTestCase(TestCase):
     def test_copilot_chat_missing_message(self):
-        response = self.client.post("/api/copilot/chat/", {}, content_type="application/json")
+        response = self.client.post("/api/copilot/", {}, content_type="application/json")
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"], "Message is required")
 
-    def test_copilot_chat_domain_restriction(self):
+    @patch("trips.services.copilot_service.OpenAI")
+    @patch.dict("os.environ", {"OPENROUTER_API_KEY": "test_key"})
+    def test_copilot_chat_domain_restriction(self, mock_openai_class):
+        mock_client = mock_openai_class.return_value
+        mock_response = type('Response', (), {
+            'choices': [
+                type('Choice', (), {
+                    'message': type('Message', (), {
+                        'content': "I specialize in trucking compliance and HOS rules."
+                    })
+                })
+            ]
+        })
+        mock_client.chat.completions.create.return_value = mock_response
+
         payload = {
             "message": "What is the capital of France?",
             "history": [],
             "context": {}
         }
-        response = self.client.post("/api/copilot/chat/", payload, content_type="application/json")
+        response = self.client.post("/api/copilot/", payload, content_type="application/json")
         self.assertEqual(response.status_code, 200)
-        reply = response.json()["reply"]
+        reply = response.json()["response"]
         self.assertIn("trucking compliance", reply)
         self.assertIn("HOS rules", reply)
 
-    def test_copilot_chat_valid_response(self):
+    @patch("trips.services.copilot_service.OpenAI")
+    @patch.dict("os.environ", {"OPENROUTER_API_KEY": "test_key"})
+    def test_copilot_chat_valid_response(self, mock_openai_class):
+        mock_client = mock_openai_class.return_value
+        mock_response = type('Response', (), {
+            'choices': [
+                type('Choice', (), {
+                    'message': type('Message', (), {
+                        'content': "The 11-Hour Driving Limit allows you to drive up to 11 hours."
+                    })
+                })
+            ]
+        })
+        mock_client.chat.completions.create.return_value = mock_response
+
         payload = {
             "message": "Explain the 11-hour rule",
             "history": [],
             "context": {}
         }
-        response = self.client.post("/api/copilot/chat/", payload, content_type="application/json")
+        response = self.client.post("/api/copilot/", payload, content_type="application/json")
         self.assertEqual(response.status_code, 200)
-        reply = response.json()["reply"]
+        reply = response.json()["response"]
         self.assertIn("11-Hour Driving Limit", reply)
         self.assertIn("11 hours", reply)
 
-    def test_copilot_chat_with_context(self):
+    @patch("trips.services.copilot_service.OpenAI")
+    @patch.dict("os.environ", {"OPENROUTER_API_KEY": "test_key"})
+    def test_copilot_chat_with_context(self, mock_openai_class):
+        mock_client = mock_openai_class.return_value
+        mock_response = type('Response', (), {
+            'choices': [
+                type('Choice', (), {
+                    'message': type('Message', (), {
+                        'content': "Your active route is Custom Test Route."
+                    })
+                })
+            ]
+        })
+        mock_client.chat.completions.create.return_value = mock_response
+
         payload = {
             "message": "show violations for my route",
             "history": [],
@@ -663,8 +705,8 @@ class CopilotChatTestCase(TestCase):
                 "stops": []
             }
         }
-        response = self.client.post("/api/copilot/chat/", payload, content_type="application/json")
+        response = self.client.post("/api/copilot/", payload, content_type="application/json")
         self.assertEqual(response.status_code, 200)
-        reply = response.json()["reply"]
+        reply = response.json()["response"]
         self.assertIn("Custom Test Route", reply)
 

@@ -124,8 +124,7 @@ def autocomplete_location(request):
 def copilot_chat(request):
     logger.info(f"Received copilot chat request: {request.data}")
     message = request.data.get('message', '').strip()
-    history = request.data.get('history', [])
-    context = request.data.get('context', {})
+    route_context = request.data.get('route_context') or request.data.get('context')
     
     if not message:
         return Response({
@@ -135,8 +134,8 @@ def copilot_chat(request):
         
     try:
         from .services.copilot_service import CopilotService
-        reply = CopilotService.get_response(message, history, context)
-        return Response({"reply": reply}, status=status.HTTP_200_OK)
+        reply = CopilotService.ask_copilot(message, route_context)
+        return Response({"response": reply}, status=status.HTTP_200_OK)
     except Exception as e:
         logger.exception("Error in copilot chat view:")
         return Response({

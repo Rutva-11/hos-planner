@@ -76,13 +76,16 @@ export async function fetchAutocompleteSuggestions(query) {
  * Sends a POST request to the Django backend HOS Compliance Copilot endpoint.
  */
 export async function sendCopilotChatMessage(message, history = [], context = {}) {
+  const payload = {
+    message,
+    route_context: context
+  };
+
   try {
-    const response = await API.post('/copilot/chat/', {
-      message,
-      history,
-      context
-    });
-    return response.data;
+    const response = await API.post('/copilot/', payload);
+    return {
+      reply: response.data.response
+    };
   } catch (error) {
     if (error.response && error.response.data) {
       const data = error.response.data;

@@ -239,7 +239,7 @@ export default function LandingPage() {
     {
       id: 'welcome',
       sender: 'bot',
-      text: "Hello! I am your **AURA Compliance Copilot**.\n\nI am tracking your route metrics in real time. Ask me about FMCSA regulations, 11-hour driving limits, sleeper berth rules, or fuel stops.",
+      text: "AURA Compliance Copilot ready.",
       timestamp: new Date()
     }
   ]);
@@ -345,7 +345,7 @@ export default function LandingPage() {
       {
         id: 'welcome',
         sender: 'bot',
-        text: "Hello! I am your **AURA Compliance Copilot**.\n\nI am tracking your route metrics in real time. Ask me about FMCSA regulations, 11-hour driving limits, sleeper berth rules, or fuel stops.",
+        text: "AURA Compliance Copilot ready.",
         timestamp: new Date()
       }
     ]);
