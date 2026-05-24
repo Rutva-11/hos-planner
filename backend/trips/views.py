@@ -95,8 +95,7 @@ def plan_trip(request):
         logger.exception("Error planning trip:")
         return Response({
             "error": "An unexpected server error occurred. Please try again later.",
-            "code": "internal_error",
-            "details": str(e)
+            "code": "internal_error"
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @csrf_exempt

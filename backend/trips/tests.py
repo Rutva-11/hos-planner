@@ -625,7 +625,7 @@ class CopilotChatTestCase(TestCase):
     def test_copilot_chat_missing_message(self):
         response = self.client.post("/api/copilot/", {}, content_type="application/json")
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"], "Message is required")
+        self.assertEqual(response.json()["error"], "prompt is required")
 
     @patch("trips.services.copilot_service.OpenAI")
     @patch.dict("os.environ", {"OPENROUTER_API_KEY": "test_key"})

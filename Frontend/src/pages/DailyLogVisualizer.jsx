@@ -20,12 +20,15 @@ import { fetchDailyLogs } from '../services/api';
 
 // Helper to format HH:MM into AM/PM
 function formatTimeToAMPM(timeStr) {
+  if (!timeStr || typeof timeStr !== 'string') return '12:00 AM';
   if (timeStr === '00:00') return '12:00 AM';
   if (timeStr === '12:00') return '12:00 PM';
   if (timeStr === '24:00') return '12:00 AM';
-  const [hStr, mStr] = timeStr.split(':');
-  const h = parseInt(hStr, 10);
-  const m = parseInt(mStr, 10);
+  const parts = timeStr.split(':');
+  if (parts.length < 2) return '12:00 AM';
+  const h = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  if (isNaN(h) || isNaN(m)) return '12:00 AM';
   const ampm = h >= 12 ? 'PM' : 'AM';
   const displayH = h % 12 === 0 ? 12 : h % 12;
   const displayM = m < 10 ? `0${m}` : m;
@@ -34,7 +37,10 @@ function formatTimeToAMPM(timeStr) {
 
 // Convert "HH:MM" to total minutes from midnight
 function timeToMinutes(timeStr) {
-  const [h, m] = timeStr.split(':').map(Number);
+  if (!timeStr || typeof timeStr !== 'string') return 0;
+  const parts = timeStr.split(':').map(Number);
+  if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) return 0;
+  const [h, m] = parts;
   return h * 60 + m;
 }
 
@@ -45,7 +51,7 @@ export default function DailyLogVisualizer() {
   const [error, setError] = useState(null);
   
   // Interactive signature tracking
-  const [signedDays, setSignedDays] = useState({ 1: true, 2: true, 3: false });
+  const [signedDays, setSignedDays] = useState({});
   const [isSigning, setIsSigning] = useState(false);
 
   // Hover tracking for SVG segments
@@ -53,19 +59,36 @@ export default function DailyLogVisualizer() {
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
+    let isMounted = true;
     async function loadLogs() {
       try {
         setLoading(true);
         const data = await fetchDailyLogs();
-        setLogs(data);
+        if (isMounted) {
+          setLogs(data);
+          const initialSigned = {};
+          if (Array.isArray(data)) {
+            data.forEach(log => {
+              initialSigned[log.day] = log.certification_status === 'Certified';
+            });
+          }
+          setSignedDays(initialSigned);
+        }
       } catch (err) {
-        setError('Failed to fetch daily logs. Make sure the backend server is running.');
+        if (isMounted) {
+          setError('Failed to fetch daily logs. Make sure the backend server is running.');
+        }
         console.error(err);
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     }
     loadLogs();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const handleSignLogs = (dayNum) => {
@@ -99,8 +122,22 @@ export default function DailyLogVisualizer() {
     );
   }
 
+  if (!logs || logs.length === 0) {
+    return (
+      <div className="min-h-screen bg-luxury-charcoal-800 text-white flex items-center justify-center p-8">
+        <div className="p-8 rounded-3xl border border-luxury-charcoal-700 bg-luxury-charcoal-900/50 max-w-md text-center space-y-4">
+          <FileText className="h-12 w-12 text-luxury-gold-500 mx-auto opacity-40" />
+          <h2 className="font-serif text-2xl font-medium text-white">No Logs Available</h2>
+          <p className="text-xs text-luxury-charcoal-300 font-light leading-relaxed">
+            There are currently no daily logs recorded in the system.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   const activeLog = logs.find(log => log.day === activeDay) || logs[0];
-  const isCertified = signedDays[activeLog.day];
+  const isCertified = !!signedDays[activeLog.day];
 
   // SVG dimensions & scales
   const svgWidth = 840;
@@ -406,15 +443,17 @@ export default function DailyLogVisualizer() {
                           onMouseEnter={(e) => {
                             setHoveredSegment(seg);
                             const rect = e.currentTarget.getBoundingClientRect();
+                            const rawX = e.clientX - rect.left + startX - 40;
                             setTooltipPos({
-                              x: e.clientX - rect.left + startX - 40,
+                              x: Math.min(Math.max(rawX, 0), svgWidth - 220),
                               y: y - 85
                             });
                           }}
                           onMouseMove={(e) => {
                             const rect = e.currentTarget.getBoundingClientRect();
+                            const rawX = e.clientX - rect.left + startX - 40;
                             setTooltipPos({
-                              x: e.clientX - rect.left + startX - 40,
+                              x: Math.min(Math.max(rawX, 0), svgWidth - 220),
                               y: y - 85
                             });
                           }}
@@ -626,7 +665,7 @@ export default function DailyLogVisualizer() {
                   </p>
                 </div>
                 <div className="px-3 py-1 bg-luxury-charcoal-950 text-luxury-charcoal-350 border border-luxury-charcoal-750 text-[10px] rounded-lg font-mono">
-                  {activeLog.segments.length} LOGGED CHANGES
+                  {activeLog.segments?.length ?? 0} LOGGED CHANGES
                 </div>
               </div>
 
@@ -643,7 +682,7 @@ export default function DailyLogVisualizer() {
                     </tr>
                   </thead>
                   <tbody className="font-light divide-y divide-luxury-charcoal-750/30">
-                    {activeLog.segments.map((seg, i) => {
+                    {(activeLog.segments || []).map((seg, i) => {
                       const violation = getSegmentViolation(seg);
                       
                       return (

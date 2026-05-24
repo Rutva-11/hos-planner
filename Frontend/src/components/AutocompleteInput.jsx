@@ -28,6 +28,14 @@ export default function AutocompleteInput({
   const containerRef = useRef(null);
   
   const lastConfirmedValue = useRef(value || '');
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
   
   // Sync internal value with parent controlled value
   useEffect(() => {
@@ -73,17 +81,23 @@ export default function AutocompleteInput({
     const handler = setTimeout(async () => {
       try {
         const results = await fetchAutocompleteSuggestions(trimmed);
-        if (queryCache) {
-          queryCache.current[trimmed] = results;
+        if (isMountedRef.current) {
+          if (queryCache) {
+            queryCache.current[trimmed] = results;
+          }
+          setSuggestions(results);
         }
-        setSuggestions(results);
       } catch (err) {
-        if ((err.status === 429 || err.code === 'rate_limited') && onRateLimit) {
-          onRateLimit();
+        if (isMountedRef.current) {
+          if ((err.status === 429 || err.code === 'rate_limited') && onRateLimit) {
+            onRateLimit();
+          }
+          setSuggestions([]);
         }
-        setSuggestions([]);
       } finally {
-        setIsFetching(false);
+        if (isMountedRef.current) {
+          setIsFetching(false);
+        }
       }
     }, 400); // 400ms debounce
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import TripPlannerForm from '../components/TripPlannerForm';
 import MapExperience from '../components/MapExperience';
@@ -51,6 +51,16 @@ export default function PlannerPage() {
   const [activeTab, setActiveTab] = useState('timeline'); // 'timeline' or 'logs'
   const [rateLimitCountdown, setRateLimitCountdown] = useState(0);
 
+  const abortControllerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (rateLimitCountdown <= 0) return;
     const timer = setInterval(() => {
@@ -60,6 +70,12 @@ export default function PlannerPage() {
   }, [rateLimitCountdown]);
 
   const handlePlanRoute = async ({ origin, pickup, dropoff, cycleHours }) => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setIsLoading(true);
     setApiError(null);
     setActiveRoute(null); // Clear previous route to prevent stale map drawing/lines
@@ -67,9 +83,14 @@ export default function PlannerPage() {
     setLastParams(params);
 
     try {
-      const tripData = await calculateTripPlan(params);
-      setActiveRoute(tripData);
+      const tripData = await calculateTripPlan({ ...params, signal: controller.signal });
+      if (!controller.signal.aborted) {
+        setActiveRoute(tripData);
+      }
     } catch (err) {
+      if (controller.signal.aborted) {
+        return;
+      }
       console.error("API error planning route:", err);
       let message = 'An unexpected network error occurred. Please verify backend connectivity.';
       let details = null;
@@ -106,7 +127,9 @@ export default function PlannerPage() {
         status: err.status
       });
     } finally {
-      setIsLoading(false);
+      if (abortControllerRef.current === controller) {
+        setIsLoading(false);
+      }
     }
   };
 

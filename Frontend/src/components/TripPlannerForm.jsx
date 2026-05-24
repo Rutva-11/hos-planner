@@ -438,7 +438,7 @@ export default function TripPlannerForm({ onPlanRoute, isSubmitting, apiError, o
                 step="any"
                 disabled={isSubmitting}
                 value={cycleHours}
-                onChange={(e) => handleInputChange('cycle', e.target.value === '' ? '' : Number(e.target.value), setCycleHours)}
+                onChange={(e) => handleInputChange('cycle', e.target.value, setCycleHours)}
                 onBlur={() => setTouched(prev => ({ ...prev, cycle: true }))}
                 placeholder="70"
                 max="70"

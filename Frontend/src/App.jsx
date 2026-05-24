@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import Navbar from './components/Navbar';
 import LandingPage from './pages/LandingPage';
@@ -24,6 +24,8 @@ export default function App() {
               <Route path="/" element={<LandingPage />} />
               <Route path="/planner" element={<PlannerPage />} />
               <Route path="/logs" element={<DailyLogVisualizer />} />
+              {/* Redirect all unmatched paths to home */}
+              <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </main>
         </div>

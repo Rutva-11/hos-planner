@@ -159,6 +159,8 @@ class TripResponseSerializer(serializers.Serializer):
     
     distance_miles = serializers.FloatField()
     duration_seconds = serializers.FloatField()
+    start_time = serializers.DateTimeField()
+    initial_cycle_hours = serializers.FloatField()
     polyline = serializers.SerializerMethodField()
     
     stops = StopSerializer(many=True)

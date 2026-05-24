@@ -80,11 +80,13 @@ export default function MapExperience({ stops, polyline }) {
 
   if (stops && stops.length > 0) {
     stops.forEach(stop => {
-      // Round to 5 decimal places to handle micro-differences (approx 1 meter precision)
-      const coordKey = `${stop.lat.toFixed(5)},${stop.lng.toFixed(5)}`;
-      if (!coordsSet.has(coordKey)) {
-        coordsSet.add(coordKey);
-        uniqueStops.push(stop);
+      if (stop && stop.lat != null && stop.lng != null && typeof stop.lat === 'number' && typeof stop.lng === 'number') {
+        // Round to 5 decimal places to handle micro-differences (approx 1 meter precision)
+        const coordKey = `${stop.lat.toFixed(5)},${stop.lng.toFixed(5)}`;
+        if (!coordsSet.has(coordKey)) {
+          coordsSet.add(coordKey);
+          uniqueStops.push(stop);
+        }
       }
     });
   }

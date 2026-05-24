@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Compass, Fuel, Clock, Milestone, MapPin, Calendar, HelpCircle } from 'lucide-react';
+import { Compass, Fuel, Clock, Milestone, MapPin, Calendar, HelpCircle, Info } from 'lucide-react';
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -33,6 +33,7 @@ export default function RouteResults({ route }) {
   }
 
   const { metrics, stops } = route;
+  if (!metrics || !stops) return null;
 
   return (
     <motion.div
@@ -41,6 +42,15 @@ export default function RouteResults({ route }) {
       animate="visible"
       className="space-y-8"
     >
+      {route.fallbackMode && (
+        <div className="p-4 rounded-2xl border border-luxury-gold-500/20 bg-luxury-gold-500/5 text-luxury-gold-400 text-xs font-light leading-relaxed flex items-start gap-3">
+          <Info className="h-5 w-5 text-luxury-gold-500 shrink-0 mt-0.5 animate-pulse" />
+          <div>
+            <span className="font-semibold block mb-0.5 uppercase tracking-wider text-[10px]">Estimated Compliance Projection</span>
+            Live routing data is temporarily unavailable. Showing estimated compliance projection.
+          </div>
+        </div>
+      )}
       
       {/* Route Metrics Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
