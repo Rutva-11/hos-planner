@@ -65,3 +65,5 @@ backend/htmlcov/
 credentials.json
 *.pem
 *.key
+
+.DS_Store
