@@ -2,6 +2,7 @@ import os
 import math
 import requests
 import logging
+import time
 import json
 import hashlib
 import re
@@ -478,6 +479,165 @@ class RouteService:
         return None
 
     @classmethod
+    def _request_with_retry(cls, method, url, max_retries=3, backoff_factor=1.5, **kwargs):
+        """
+        Executes a requests call with retry logic and exponential backoff.
+        Filters by specific status codes or exception types for retries.
+        """
+        retries = 0
+        last_exception = None
+        while retries < max_retries:
+            start_time = time.time()
+            try:
+                if method.upper() == "GET":
+                    response = requests.get(url, **kwargs)
+                elif method.upper() == "POST":
+                    response = requests.post(url, **kwargs)
+                else:
+                    response = requests.request(method, url, **kwargs)
+                latency = time.time() - start_time
+                
+                # Structured log for successful request (excluding error statuses that we want to retry)
+                if response.status_code not in [429, 502, 503, 504]:
+                    logger.info(
+                        "API_SUCCESS: Request completed. method=%s, url=%s, status=%d, latency=%.2fs, attempt=%d",
+                        method, url, response.status_code, latency, retries + 1
+                    )
+                    return response
+                
+                logger.warning(
+                    "API_WARNING: Transient error status received. method=%s, url=%s, status=%d, latency=%.2fs, attempt=%d",
+                    method, url, response.status_code, latency, retries + 1
+                )
+                
+                if response.status_code == 429:
+                    cache.set("ors_rate_limited", True, timeout=30)
+                
+                retries += 1
+                if retries < max_retries:
+                    sleep_time = backoff_factor ** retries
+                    time.sleep(sleep_time)
+                else:
+                    return response
+                    
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                retries += 1
+                last_exception = e
+                latency = time.time() - start_time
+                logger.warning(
+                    "API_WARNING: Network exception. method=%s, url=%s, latency=%.2fs, attempt=%d, error=%s",
+                    method, url, latency, retries, str(e)
+                )
+                if retries < max_retries:
+                    sleep_time = backoff_factor ** retries
+                    time.sleep(sleep_time)
+                    
+            except Exception as e:
+                latency = time.time() - start_time
+                logger.error(
+                    "API_ERROR: Unexpected request exception. method=%s, url=%s, latency=%.2fs, error=%s",
+                    method, url, latency, str(e)
+                )
+                raise e
+                
+        if last_exception:
+            raise last_exception
+            
+        return response
+
+    @classmethod
+    def _get_autocomplete_fallback(cls, query, preset_matches):
+        normalized = query.lower().strip()
+        results = []
+        for item in cls.MOCK_DATABASE:
+            if normalized in item["name"].lower() or normalized in item["city"].lower():
+                results.append({
+                    "name": item["name"],
+                    "lat": item["lat"],
+                    "lon": item["lon"]
+                })
+        for item in preset_matches:
+            if not any(r["name"] == item["name"] for r in results):
+                results.append(item)
+        return results[:5]
+
+    @classmethod
+    def _calculate_mock_route(cls, waypoints, cache_key):
+        logger.info("Operating in Mock Fallback Mode for routing calculation.")
+        
+        # Prevent ocean-crossing/continent-jumping routes using get_drivable_continent
+        cls._validate_route_feasibility(waypoints)
+        
+        # Restrict mock routing to known mock cities only to avoid fake routing
+        for idx, pt in enumerate(waypoints):
+            closest_city = cls.get_closest_mock_city(pt[0], pt[1])
+            if not closest_city:
+                logger.warning(f"Mock routing rejected because waypoint {idx} at ({pt[0]}, {pt[1]}) is not near any predefined hub.")
+                raise RoutingException("Routing API is currently offline/unavailable, and custom route calculation is disabled without an API key.")
+        
+        legs = []
+        total_distance = 0.0
+        total_duration = 0.0
+        complete_polyline = []
+        
+        for i in range(len(waypoints) - 1):
+            start = waypoints[i]
+            end = waypoints[i+1]
+            
+            dist = cls.haversine_distance(start[0], start[1], end[0], end[1]) * 1.25
+            dur = dist / cls.AVERAGE_TRUCK_SPEED_MPS
+            
+            poly = []
+            steps = 20
+            start_lat, start_lon = start[0], start[1]
+            end_lat, end_lon = end[0], end[1]
+            d_lat = end_lat - start_lat
+            d_lon = end_lon - start_lon
+            length = math.sqrt(d_lat**2 + d_lon**2)
+            
+            for step in range(steps + 1):
+                t = step / steps
+                lat = start_lat + t * d_lat
+                lon = start_lon + t * d_lon
+                wiggle = 0.08 * math.sin(t * math.pi)
+                if length > 0:
+                    lat += wiggle * (-d_lon / length)
+                    lon += wiggle * (d_lat / length)
+                poly.append([lat, lon])
+            
+            legs.append({
+                "distance_meters": dist,
+                "duration_seconds": dur,
+                "polyline": poly
+            })
+            total_distance += dist
+            total_duration += dur
+            
+            if i == 0:
+                complete_polyline.extend(poly)
+            else:
+                complete_polyline.extend(poly[1:])
+        
+        result = {
+            "distance_meters": total_distance,
+            "duration_seconds": total_duration,
+            "polyline": complete_polyline,
+            "legs": legs
+        }
+        # Enforce validations on mock result to verify correctness
+        if len(complete_polyline) < 15:
+            if total_distance > 3200:
+                raise RoutingException("Calculated route has insufficient road geometry (detected straight-line fallback).")
+        if total_distance <= 0:
+            raise RoutingException("Calculated route distance is zero or negative.")
+        if len(legs) < len(waypoints) - 1:
+            raise RoutingException("Route calculation returned insufficient route segments.")
+            
+        cache.set(cache_key, result, timeout=86400)
+        return result
+
+
+    @classmethod
     def geocode(cls, query):
         """
         Geocodes a query string to a dict: {"lat": float, "lon": float, "name": str}
@@ -548,27 +708,27 @@ class RouteService:
                 "q": query,
                 "limit": 10
             }
-            response = requests.get(url, headers=headers, params=params, timeout=10)
-        except requests.exceptions.Timeout as e:
-            logger.error(f"Timeout calling Photon Geocoding API: {e}")
-            raise ORSTimeoutException("Connection to the geocoding service timed out.")
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error calling Photon Geocoding API: {e}")
-            raise ORSUnavailableException(f"Failed to communicate with geocoding service: {e}")
+            response = cls._request_with_retry("GET", url, headers=headers, params=params, timeout=10)
             
-        if response.status_code != 200:
-            logger.error(f"Photon Geocoding error response (status {response.status_code}): {response.text}")
             if response.status_code == 429:
                 cache.set("ors_rate_limited", True, timeout=30)
                 raise ORSRateLimitException("Geocoding API rate limit exceeded. Please try again later.")
-            elif response.status_code in [500, 502, 503, 504]:
-                raise ORSUnavailableException("Geocoding service is temporarily unavailable or returned a server error.")
-            raise GeocodingException(f"Geocoding failed with status code {response.status_code}")
-            
-        data = response.json()
-        features = data.get("features", [])
-        if not features:
-            raise GeocodingException(f"Could not resolve location: '{query}'. Please verify spelling or specify city/state.")
+                
+            if response.status_code != 200:
+                logger.warning(f"Photon Geocoding error response (status {response.status_code}): {response.text}. Falling back to deterministic query parsing.")
+                return cls._parse_mock_query(query)
+                
+            data = response.json()
+            features = data.get("features", [])
+            if not features:
+                logger.warning(f"Photon Geocoding returned no features for '{query}'. Falling back to deterministic query parsing.")
+                return cls._parse_mock_query(query)
+                
+        except ORSRateLimitException as e:
+            raise e
+        except Exception as e:
+            logger.warning(f"Photon Geocoding request failed: {e}. Falling back to deterministic query parsing.")
+            return cls._parse_mock_query(query)
             
         candidates = []
         marine_rejected = False
@@ -623,6 +783,25 @@ class RouteService:
         return result
 
     @classmethod
+    def _validate_route_feasibility(cls, waypoints):
+        """
+        Validates if a route is possible (not intercontinental, ocean-crossing, or Hawaii).
+        Raises RoutingException if the route is impossible.
+        """
+        if not waypoints or len(waypoints) < 2:
+            return
+
+        regions = {cls.get_drivable_continent(pt[0], pt[1]) for pt in waypoints}
+        if "hawaii" in regions:
+            raise RoutingException("No drivable road route exists between the selected locations (routes to/from Hawaii are impossible for truck driving).")
+        if "ocean" in regions:
+            raise RoutingException("No drivable road route exists between the selected locations (routes crossing or entering oceans are impossible for truck driving).")
+        if "other" in regions:
+            raise RoutingException("No drivable road route exists between the selected locations (unroutable or isolated regions).")
+        if len(regions) > 1:
+            raise RoutingException("No drivable road route exists between the selected locations (routes across different continents or landmasses are impossible for truck driving).")
+
+    @classmethod
     def get_route(cls, waypoints):
         """
         Calculates route for a list of waypoints.
@@ -644,15 +823,7 @@ class RouteService:
                 raise RoutingException(f"Invalid coordinate values at index {idx}: lat={lat_val}, lon={lon_val}. Lat must be in [-90, 90] and Lon in [-180, 180].")
 
         # Prevent ocean-crossing/continent-jumping routes using get_drivable_continent
-        regions = {cls.get_drivable_continent(pt[0], pt[1]) for pt in waypoints}
-        if "hawaii" in regions:
-            raise RoutingException("No drivable road route exists between the selected locations (routes to/from Hawaii are impossible for truck driving).")
-        if "ocean" in regions:
-            raise RoutingException("No drivable road route exists between the selected locations (routes crossing or entering oceans are impossible for truck driving).")
-        if "other" in regions:
-            raise RoutingException("No drivable road route exists between the selected locations (unroutable or isolated regions).")
-        if len(regions) > 1:
-            raise RoutingException("No drivable road route exists between the selected locations (routes across different continents or landmasses are impossible for truck driving).")
+        cls._validate_route_feasibility(waypoints)
 
         waypoints_json = json.dumps(waypoints, sort_keys=True)
         waypoints_hash = hashlib.md5(waypoints_json.encode('utf-8')).hexdigest()
@@ -671,74 +842,7 @@ class RouteService:
         
         if not api_key:
             logger.info("ORS API key is missing. Operating in Mock Fallback Mode for routing calculation.")
-            
-            # Restrict mock routing to known mock cities only to avoid fake routing
-            for idx, pt in enumerate(waypoints):
-                closest_city = cls.get_closest_mock_city(pt[0], pt[1])
-                if not closest_city:
-                    logger.warning(f"Mock routing rejected because waypoint {idx} at ({pt[0]}, {pt[1]}) is not near any predefined hub.")
-                    raise RoutingException("Routing API is currently offline/unavailable, and custom route calculation is disabled without an API key.")
-            
-            legs = []
-            total_distance = 0.0
-            total_duration = 0.0
-            complete_polyline = []
-            
-            for i in range(len(waypoints) - 1):
-                start = waypoints[i]
-                end = waypoints[i+1]
-                
-                dist = cls.haversine_distance(start[0], start[1], end[0], end[1]) * 1.25
-                dur = dist / cls.AVERAGE_TRUCK_SPEED_MPS
-                
-                poly = []
-                steps = 20
-                start_lat, start_lon = start[0], start[1]
-                end_lat, end_lon = end[0], end[1]
-                d_lat = end_lat - start_lat
-                d_lon = end_lon - start_lon
-                length = math.sqrt(d_lat**2 + d_lon**2)
-                
-                for step in range(steps + 1):
-                    t = step / steps
-                    lat = start_lat + t * d_lat
-                    lon = start_lon + t * d_lon
-                    wiggle = 0.08 * math.sin(t * math.pi)
-                    if length > 0:
-                        lat += wiggle * (-d_lon / length)
-                        lon += wiggle * (d_lat / length)
-                    poly.append([lat, lon])
-                
-                legs.append({
-                    "distance_meters": dist,
-                    "duration_seconds": dur,
-                    "polyline": poly
-                })
-                total_distance += dist
-                total_duration += dur
-                
-                if i == 0:
-                    complete_polyline.extend(poly)
-                else:
-                    complete_polyline.extend(poly[1:])
-            
-            result = {
-                "distance_meters": total_distance,
-                "duration_seconds": total_duration,
-                "polyline": complete_polyline,
-                "legs": legs
-            }
-            # Enforce validations on mock result to verify correctness
-            if len(complete_polyline) < 15:
-                if total_distance > 3200:
-                    raise RoutingException("Calculated route has insufficient road geometry (detected straight-line fallback).")
-            if total_distance <= 0:
-                raise RoutingException("Calculated route distance is zero or negative.")
-            if len(legs) < len(waypoints) - 1:
-                raise RoutingException("Route calculation returned insufficient route segments.")
-                
-            cache.set(cache_key, result, timeout=86400)
-            return result
+            return cls._calculate_mock_route(waypoints, cache_key)
             
         try:
             coordinates_lng_lat = [[pt[1], pt[0]] for pt in waypoints]
@@ -751,37 +855,32 @@ class RouteService:
                 "coordinates": coordinates_lng_lat
             }
             
-            response = requests.post(url, json=payload, headers=headers, timeout=15)
-        except requests.exceptions.Timeout as e:
-            logger.error(f"Timeout calling OpenRouteService Routing API: {e}")
-            raise ORSTimeoutException("Connection to the routing service timed out.")
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error calling OpenRouteService API: {e}")
-            raise ORSUnavailableException(f"Failed to communicate with routing service: {e}")
+            response = cls._request_with_retry("POST", url, json=payload, headers=headers, timeout=15)
             
-        if response.status_code != 200:
-            try:
-                error_data = response.json()
-                error_msg = error_data.get("error", {}).get("message", response.text)
-                error_code = error_data.get("error", {}).get("code", "")
-            except Exception:
-                error_msg = response.text
-                error_code = ""
-            
-            logger.error(f"OpenRouteService error response (status {response.status_code}): {response.text}")
-            
-            if response.status_code == 429:
-                cache.set("ors_rate_limited", True, timeout=30)
-                raise ORSRateLimitException("OpenRouteService API rate limit exceeded. Please try again later.")
-            elif response.status_code in [500, 502, 503, 504]:
-                raise ORSUnavailableException("OpenRouteService is temporarily unavailable or returned a server error.")
-            
-            if "Route could not be found" in error_msg or "Connection between" in error_msg or error_code == 2009 or "2009" in str(error_code):
-                raise RoutingException("No drivable road route exists between the selected locations (e.g., across oceans or disconnected landmasses).")
-            elif "Could not find point" in error_msg or "Unable to find a route" in error_msg or error_code == 2010 or "2010" in str(error_code):
-                raise RoutingException("Could not find a routable road close to one of the specified locations.")
-            else:
-                raise RoutingException(f"Routing calculation failed: {error_msg}")
+            if response.status_code != 200:
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get("error", {}).get("message", response.text)
+                    error_code = error_data.get("error", {}).get("code", "")
+                except Exception:
+                    error_msg = response.text
+                    error_code = ""
+                
+                logger.warning(f"OpenRouteService error response (status {response.status_code}): {response.text}")
+                
+                if "Route could not be found" in error_msg or "Connection between" in error_msg or error_code == 2009 or "2009" in str(error_code):
+                    raise RoutingException("No drivable road route exists between the selected locations (e.g., across oceans or disconnected landmasses).")
+                elif "Could not find point" in error_msg or "Unable to find a route" in error_msg or error_code == 2010 or "2010" in str(error_code):
+                    raise RoutingException("Could not find a routable road close to one of the specified locations.")
+                
+                logger.warning("Transient ORS error. Falling back to mock route generation.")
+                return cls._calculate_mock_route(waypoints, cache_key)
+                
+        except RoutingException as e:
+            raise e
+        except Exception as e:
+            logger.warning(f"Error calling OpenRouteService API: {e}. Falling back to mock route generation.")
+            return cls._calculate_mock_route(waypoints, cache_key)
                 
         data = response.json()
         if "features" not in data or not data["features"]:
@@ -930,25 +1029,22 @@ class RouteService:
                 "q": query,
                 "limit": 50
             }
-            response = requests.get(url, headers=headers, params=params, timeout=5)
-        except requests.exceptions.Timeout as e:
-            logger.error(f"Timeout calling Photon Autocomplete API: {e}")
-            raise ORSTimeoutException("Connection to the autocompletion service timed out.")
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error calling Photon Autocomplete API: {e}")
-            raise ORSUnavailableException(f"Failed to communicate with autocompletion service: {e}")
-
-        if response.status_code != 200:
-            logger.error(f"Photon Autocomplete error response (status {response.status_code}): {response.text}")
-            if response.status_code == 429:
-                cache.set("ors_rate_limited", True, timeout=30)
-                raise ORSRateLimitException("Geocoding API rate limit exceeded. Please try again later.")
-            elif response.status_code in [500, 502, 503, 504]:
-                raise ORSUnavailableException("Geocoding service is temporarily unavailable or returned a server error.")
-            return preset_matches[:5]
-
-        data = response.json()
-        features = data.get("features", [])
+            response = cls._request_with_retry("GET", url, headers=headers, params=params, timeout=5)
+            
+            if response.status_code != 200:
+                logger.warning(f"Photon Autocomplete API returned status {response.status_code}. Falling back to preset/mock database matches.")
+                results = cls._get_autocomplete_fallback(query, preset_matches)
+                results.sort(key=lambda x: cls.score_suggestion(x, query), reverse=True)
+                return results[:5]
+                
+            data = response.json()
+            features = data.get("features", [])
+            
+        except Exception as e:
+            logger.warning(f"Photon Autocomplete API request failed: {e}. Falling back to preset/mock database matches.")
+            results = cls._get_autocomplete_fallback(query, preset_matches)
+            results.sort(key=lambda x: cls.score_suggestion(x, query), reverse=True)
+            return results[:5]
         results = []
         for idx, feat in enumerate(features):
             coords = feat.get("geometry", {}).get("coordinates", [])

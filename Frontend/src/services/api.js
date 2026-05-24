@@ -28,6 +28,19 @@ export async function calculateTripPlan({ origin, pickup, dropoff, cycleHours, s
     if (axios.isCancel(error)) {
       throw error;
     }
+    
+    const status = error.response ? error.response.status : null;
+    const data = error.response ? error.response.data : {};
+    
+    // Propagate validation (400) and rate limit (429) errors directly to the page UI
+    if (status === 400 || status === 429) {
+      const parsedError = new Error(data.error || (status === 400 ? 'Validation failed.' : 'Rate limit exceeded.'));
+      parsedError.code = data.code || (status === 400 ? 'validation_error' : 'rate_limited');
+      parsedError.details = data.details || null;
+      parsedError.status = status;
+      throw parsedError;
+    }
+    
     console.warn("Routing API failed, falling back to estimated route projection:", error);
     try {
       const fallbackData = generateFallbackTripPlan(payload);

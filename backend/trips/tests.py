@@ -621,6 +621,104 @@ class RouteServiceTestCase(TestCase):
             with self.assertRaises(RoutingException):
                 RouteService.get_route([[33.74, -118.26], [33.45, -112.07], [32.77, -96.79]])
 
+    @patch("trips.services.route_service.requests.get")
+    def test_geocoding_fallback_on_network_error(self, mock_get):
+        mock_get.side_effect = requests.exceptions.ConnectionError("Network is down")
+        result = RouteService.geocode("Denver")
+        self.assertEqual(result["name"], "Denver Terminal, CO")
+        self.assertEqual(result["lat"], 39.73)
+        self.assertEqual(result["lon"], -104.99)
+
+    @patch("trips.services.route_service.requests.get")
+    def test_autocomplete_fallback_on_network_error(self, mock_get):
+        mock_get.side_effect = requests.exceptions.Timeout("Request timed out")
+        results = RouteService.autocomplete("Seattle")
+        self.assertTrue(len(results) > 0)
+        self.assertEqual(results[0]["name"], "Seattle, Washington, USA")
+
+    @patch("trips.services.route_service.requests.post")
+    @patch("trips.services.route_service.os.getenv")
+    def test_routing_fallback_on_transient_error(self, mock_getenv, mock_post):
+        mock_getenv.return_value = "fake_api_key"
+        mock_post.return_value = type('Response', (), {
+            'status_code': 503,
+            'text': "Service Unavailable"
+        })
+        waypoints = [
+            [47.6062, -122.3321],
+            [43.6150, -116.2023]
+        ]
+        result = RouteService.get_route(waypoints)
+        self.assertTrue(result["distance_meters"] > 0)
+        self.assertTrue(len(result["polyline"]) > 0)
+
+    @patch("trips.services.route_service.os.getenv")
+    def test_routing_us_to_india_rejected_no_key(self, mock_getenv):
+        # US -> India route is rejected when API key is missing (fallback mode)
+        mock_getenv.return_value = ""
+        india_coords = [19.0760, 72.8777] # Mumbai
+        usa_coords = [34.0522, -118.2437] # LA
+        with self.assertRaises(RoutingException):
+            RouteService.get_route([usa_coords, india_coords])
+
+    @patch("trips.services.route_service.requests.post")
+    @patch("trips.services.route_service.os.getenv")
+    def test_routing_us_to_india_rejected_transient_error(self, mock_getenv, mock_post):
+        # US -> India route is rejected even if ORS has a transient error (fallback should not trigger)
+        mock_getenv.return_value = "fake_key"
+        mock_post.return_value = type('Response', (), {
+            'status_code': 503,
+            'text': "Service Unavailable"
+        })
+        india_coords = [19.0760, 72.8777]
+        usa_coords = [34.0522, -118.2437]
+        with self.assertRaises(RoutingException):
+            RouteService.get_route([usa_coords, india_coords])
+
+    @patch("trips.services.route_service.os.getenv")
+    def test_routing_hawaii_rejected_no_key(self, mock_getenv):
+        # Hawaii route is rejected when API key is missing (fallback mode)
+        mock_getenv.return_value = ""
+        hawaii_coords = [21.3099, -157.8581]
+        usa_coords = [34.0522, -118.2437]
+        with self.assertRaises(RoutingException):
+            RouteService.get_route([usa_coords, hawaii_coords])
+
+    @patch("trips.services.route_service.os.getenv")
+    def test_routing_ocean_crossing_rejected_no_key(self, mock_getenv):
+        # Ocean-crossing route is rejected when API key is missing (fallback mode)
+        mock_getenv.return_value = ""
+        ocean_coords = [33.74, -140.0] # Middle of Pacific Ocean
+        usa_coords = [34.0522, -118.2437]
+        with self.assertRaises(RoutingException):
+            RouteService.get_route([usa_coords, ocean_coords])
+
+    @patch("trips.services.route_service.os.getenv")
+    def test_routing_valid_us_trucking_lanes_work_no_key(self, mock_getenv):
+        # Valid US trucking lanes work under mock fallback when key is missing
+        mock_getenv.return_value = ""
+        seattle = [47.6062, -122.3321]
+        phoenix = [33.4484, -112.0740]
+        result = RouteService.get_route([seattle, phoenix])
+        self.assertTrue(result["distance_meters"] > 0)
+        self.assertTrue(len(result["polyline"]) > 0)
+
+    @patch("trips.services.route_service.requests.post")
+    @patch("trips.services.route_service.os.getenv")
+    def test_routing_valid_us_trucking_lanes_work_transient_error(self, mock_getenv, mock_post):
+        # Valid US trucking lanes work using mock fallback when ORS returns 503
+        mock_getenv.return_value = "fake_key"
+        mock_post.return_value = type('Response', (), {
+            'status_code': 503,
+            'text': "Service Unavailable"
+        })
+        seattle = [47.6062, -122.3321]
+        phoenix = [33.4484, -112.0740]
+        result = RouteService.get_route([seattle, phoenix])
+        self.assertTrue(result["distance_meters"] > 0)
+        self.assertTrue(len(result["polyline"]) > 0)
+
+
 class CopilotChatTestCase(TestCase):
     def test_copilot_chat_missing_message(self):
         response = self.client.post("/api/copilot/", {}, content_type="application/json")
@@ -709,4 +807,11 @@ class CopilotChatTestCase(TestCase):
         self.assertEqual(response.status_code, 200)
         reply = response.json()["response"]
         self.assertIn("Custom Test Route", reply)
+
+    @patch.dict("os.environ", {"OPENROUTER_API_KEY": ""})
+    def test_copilot_service_fallback_no_key(self):
+        from trips.services.copilot_service import CopilotService
+        reply = CopilotService.ask_copilot("Explain the 11-hour rule")
+        self.assertIn("11 cumulative hours", reply)
+        self.assertIn("14-hour consecutive duty window", reply)
 

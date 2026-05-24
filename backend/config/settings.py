@@ -205,7 +205,7 @@ if not CORS_ALLOW_ALL_ORIGINS:
 # CSRF Trusted Origins (highly critical for POST requests to work from the frontend in production)
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
-    for origin in os.getenv("CSRF_TRUSTED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+    for origin in os.getenv("CSRF_TRUSTED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173").split(",")
     if origin.strip()
 ]
 

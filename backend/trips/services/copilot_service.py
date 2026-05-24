@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -29,8 +30,14 @@ else:
 
 
 class CopilotService:
-    @staticmethod
-    def _get_fallback_response(prompt: str) -> str:
+    DEFAULT_MODEL = os.getenv("OPENROUTER_DEFAULT_MODEL", "openai/gpt-4o-mini")
+    FALLBACK_MODELS = [
+        os.getenv("OPENROUTER_FALLBACK_MODEL_1", "anthropic/claude-3-haiku"),
+        os.getenv("OPENROUTER_FALLBACK_MODEL_2", "deepseek/deepseek-chat"),
+    ]
+
+    @classmethod
+    def _get_fallback_response(cls, prompt: str) -> str:
         query_lower = prompt.lower()
         if "11-hour" in query_lower or "11 hour" in query_lower:
             return (
@@ -80,11 +87,11 @@ class CopilotService:
                 "or compliance questions, please consult the route planner or your operations team."
             )
 
-    @staticmethod
-    def ask_copilot(prompt: str) -> str:
+    @classmethod
+    def ask_copilot(cls, prompt: str) -> str:
         """
         Sends a single compliance query to OpenRouter and returns a concise response.
-        Uses a 3-model fallback chain: gpt-4o-mini → claude-3-haiku → deepseek-chat.
+        Uses a 3-model fallback chain configured by DEFAULT_MODEL and FALLBACK_MODELS.
         No conversational state or route context is maintained.
         """
         from openai import APITimeoutError, APIConnectionError, APIStatusError
@@ -135,19 +142,16 @@ class CopilotService:
                 {"role": "user", "content": prompt}
             ]
 
-            models_to_try = [
-                "openai/gpt-4o-mini",
-                "anthropic/claude-3-haiku",
-                "deepseek/deepseek-chat",
-            ]
+            models_to_try = [cls.DEFAULT_MODEL] + [m for m in cls.FALLBACK_MODELS if m]
 
             last_exception = None
             for model in models_to_try:
                 for attempt in range(1, 3):  # 2 attempts per model
+                    start_time = time.time()
                     try:
                         logger.info(
-                            "Dispatching compliance query (Attempt %d/2) via model: %s",
-                            attempt, model
+                            "API_REQUEST: OpenRouter dispatch. model=%s, attempt=%d, prompt_len=%d",
+                            model, attempt, len(prompt)
                         )
                         response = client.chat.completions.create(
                             model=model,
@@ -157,44 +161,54 @@ class CopilotService:
                             max_tokens=400,
                         )
                         content = response.choices[0].message.content
+                        latency = time.time() - start_time
                         logger.info(
-                            "OpenRouter success. Model: %s. Output: %d chars.",
-                            model, len(content)
+                            "API_SUCCESS: OpenRouter completed. model=%s, attempt=%d, latency=%.2fs, output_len=%d",
+                            model, attempt, latency, len(content)
                         )
                         return content
 
                     except APITimeoutError as te:
+                        latency = time.time() - start_time
                         logger.warning(
-                            "Timeout (attempt %d, model %s): %s", attempt, model, te
+                            "API_WARNING: OpenRouter timeout. model=%s, attempt=%d, latency=%.2fs, error=%s",
+                            model, attempt, latency, str(te)
                         )
                         last_exception = te
 
                     except APIConnectionError as ce:
+                        latency = time.time() - start_time
                         logger.warning(
-                            "Connection error (attempt %d, model %s): %s", attempt, model, ce
+                            "API_WARNING: OpenRouter connection error. model=%s, attempt=%d, latency=%.2fs, error=%s",
+                            model, attempt, latency, str(ce)
                         )
                         last_exception = ce
 
                     except APIStatusError as se:
+                        latency = time.time() - start_time
                         logger.warning(
-                            "API status error HTTP %d (attempt %d, model %s): %s",
-                            se.status_code, attempt, model, se.message
+                            "API_WARNING: OpenRouter status error HTTP %d. model=%s, attempt=%d, latency=%.2fs, error=%s",
+                            se.status_code, model, attempt, latency, se.message
                         )
                         last_exception = se
                         if se.status_code == 401:
-                            logger.error("OpenRouter authentication failed (401).")
+                            logger.error(
+                                "API_ERROR: OpenRouter authentication failed (401). model=%s, latency=%.2fs",
+                                model, latency
+                            )
                             return cls._get_fallback_response(prompt)
                         if se.status_code in (400, 404):
                             logger.warning(
-                                "Model %s unavailable (HTTP %d). Trying next model.",
+                                "API_WARNING: Model %s unavailable (HTTP %d). Skipping remaining retries.",
                                 model, se.status_code
                             )
                             break  # Skip remaining retries for this model
 
                     except Exception as e:
+                        latency = time.time() - start_time
                         logger.error(
-                            "Unexpected error (attempt %d, model %s): %s", attempt, model, e,
-                            exc_info=True
+                            "API_ERROR: OpenRouter unexpected error. model=%s, attempt=%d, latency=%.2fs, error=%s",
+                            model, attempt, latency, str(e), exc_info=True
                         )
                         last_exception = e
                         break  # Skip remaining retries for this model
@@ -205,6 +219,7 @@ class CopilotService:
 
         except Exception as e:
             logger.error(
-                "OpenRouter failed after all fallback models: %s", e, exc_info=True
+                "API_ERROR: OpenRouter failed after all fallback models. error=%s",
+                str(e), exc_info=True
             )
             return cls._get_fallback_response(prompt)
