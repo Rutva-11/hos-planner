@@ -5,19 +5,22 @@ class TripsConfig(AppConfig):
     name = "trips"
 
     def ready(self):
-        import os
         import logging
+        from trips.services.route_service import RouteService
         logger = logging.getLogger(__name__)
         
-        api_key = os.getenv("ORS_API_KEY") or os.getenv("OPENROUTE_SERVICE_API_KEY")
-        if not api_key or not api_key.strip():
-            logger.warning("Startup Check: ORS API key is missing. The application will start in Mock Fallback Mode.")
+        api_key, source = RouteService._get_api_key_details()
+        if not api_key:
+            logger.warning("Startup Check: OpenRouteService API key is missing. The application will operate in Mock Fallback Mode.")
             print("\n" + "=" * 80)
-            print(" WARNING: OpenRouteService API key (ORS_API_KEY) is not set in backend/.env!")
+            print(" WARNING: OpenRouteService API key is not set in environment variables (ORS_API_KEY, OPENROUTESERVICE_API_KEY)!")
             print(" The application will operate in HIGH-FIDELITY MOCK FALLBACK MODE.")
             print("=" * 80 + "\n")
         else:
-            logger.info("Startup Check: ORS API key detected. Using live OpenRouteService integration.")
+            masked = f"{api_key[:4]}..." if len(api_key) > 4 else "***"
+            logger.info("Startup Check: OpenRouteService API key detected from variable: %s (Prefix: %s).", source, masked)
             print("\n" + "=" * 80)
-            print(" SUCCESS: OpenRouteService API key detected. Live integration active.")
+            print(f" SUCCESS: OpenRouteService API key detected via {source}. Live integration active.")
             print("=" * 80 + "\n")
+            
+        logger.info("Startup Check: TripsConfig initialized successfully. Routing service ready.")

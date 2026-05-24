@@ -718,6 +718,71 @@ class RouteServiceTestCase(TestCase):
         self.assertTrue(result["distance_meters"] > 0)
         self.assertTrue(len(result["polyline"]) > 0)
 
+    @patch("trips.services.route_service.os.getenv")
+    def test_routing_chicago_nashville_atlanta_works_mock(self, mock_getenv):
+        # Valid US route Chicago -> Nashville -> Atlanta works in mock fallback mode
+        mock_getenv.return_value = ""
+        chicago = [41.8781, -87.6298]
+        nashville = [36.1627, -86.7816]
+        atlanta = [33.7490, -84.3880]
+        result = RouteService.get_route([chicago, nashville, atlanta])
+        self.assertTrue(result["distance_meters"] > 0)
+        self.assertTrue(len(result["polyline"]) > 0)
+        self.assertEqual(len(result["legs"]), 2)
+
+    @patch("trips.services.route_service.os.getenv")
+    def test_routing_la_dallas_works_mock(self, mock_getenv):
+        # Valid US route Los Angeles -> Dallas works in mock fallback mode
+        mock_getenv.return_value = ""
+        la = [34.0522, -118.2437]
+        dallas = [32.7767, -96.7970]
+        result = RouteService.get_route([la, dallas])
+        self.assertTrue(result["distance_meters"] > 0)
+        self.assertTrue(len(result["polyline"]) > 0)
+
+    @patch("trips.services.route_service.os.getenv")
+    def test_routing_la_kolkata_dallas_rejected(self, mock_getenv):
+        # Invalid route LA -> Kolkata -> Dallas is rejected
+        mock_getenv.return_value = ""
+        la = [34.0522, -118.2437]
+        kolkata = [22.5726, 88.3639]
+        dallas = [32.7767, -96.7970]
+        with self.assertRaises(RoutingException):
+            RouteService.get_route([la, kolkata, dallas])
+
+    @patch.dict("os.environ", {
+        "ORS_API_KEY": "key1",
+        "OPENROUTESERVICE_API_KEY": "key2",
+        "OPENROUTE_SERVICE_API_KEY": "key3"
+    })
+    def test_routing_env_var_prioritization_1(self):
+        # ORS_API_KEY is preferred
+        key, source = RouteService._get_api_key_details()
+        self.assertEqual(key, "key1")
+        self.assertEqual(source, "ORS_API_KEY")
+
+    @patch.dict("os.environ", {
+        "ORS_API_KEY": "",
+        "OPENROUTESERVICE_API_KEY": "key2",
+        "OPENROUTE_SERVICE_API_KEY": "key3"
+    })
+    def test_routing_env_var_prioritization_2(self):
+        # OPENROUTESERVICE_API_KEY is second choice
+        key, source = RouteService._get_api_key_details()
+        self.assertEqual(key, "key2")
+        self.assertEqual(source, "OPENROUTESERVICE_API_KEY")
+
+    @patch.dict("os.environ", {
+        "ORS_API_KEY": "",
+        "OPENROUTESERVICE_API_KEY": "",
+        "OPENROUTE_SERVICE_API_KEY": "key3"
+    })
+    def test_routing_env_var_prioritization_3(self):
+        # OPENROUTE_SERVICE_API_KEY is third choice
+        key, source = RouteService._get_api_key_details()
+        self.assertEqual(key, "key3")
+        self.assertEqual(source, "OPENROUTE_SERVICE_API_KEY")
+
 
 class CopilotChatTestCase(TestCase):
     def test_copilot_chat_missing_message(self):

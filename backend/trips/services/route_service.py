@@ -472,11 +472,25 @@ class RouteService:
         return f"{prefix}_{query_hash}"
 
     @classmethod
+    def _get_api_key_details(cls):
+        """
+        Consistently resolves the ORS API key prioritizing ORS_API_KEY,
+        then OPENROUTESERVICE_API_KEY, and then OPENROUTE_SERVICE_API_KEY.
+        Returns a tuple: (api_key, key_source) or (None, None).
+        """
+        for env_var in ["ORS_API_KEY", "OPENROUTESERVICE_API_KEY", "OPENROUTE_SERVICE_API_KEY"]:
+            val = os.getenv(env_var)
+            if val and val.strip():
+                return val.strip(), env_var
+        return None, None
+
+    @classmethod
     def _get_api_key(cls):
-        api_key = os.getenv("ORS_API_KEY") or os.getenv("OPENROUTE_SERVICE_API_KEY")
-        if api_key and api_key.strip():
-            return api_key.strip()
-        return None
+        api_key, source = cls._get_api_key_details()
+        if api_key:
+            masked = f"{api_key[:4]}..." if len(api_key) > 4 else "***"
+            logger.info("Using OpenRouteService API key from environment variable: %s (Prefix: %s)", source, masked)
+        return api_key
 
     @classmethod
     def _request_with_retry(cls, method, url, max_retries=3, backoff_factor=1.5, **kwargs):
@@ -567,13 +581,6 @@ class RouteService:
         
         # Prevent ocean-crossing/continent-jumping routes using get_drivable_continent
         cls._validate_route_feasibility(waypoints)
-        
-        # Restrict mock routing to known mock cities only to avoid fake routing
-        for idx, pt in enumerate(waypoints):
-            closest_city = cls.get_closest_mock_city(pt[0], pt[1])
-            if not closest_city:
-                logger.warning(f"Mock routing rejected because waypoint {idx} at ({pt[0]}, {pt[1]}) is not near any predefined hub.")
-                raise RoutingException("Routing API is currently offline/unavailable, and custom route calculation is disabled without an API key.")
         
         legs = []
         total_distance = 0.0
